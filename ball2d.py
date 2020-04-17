@@ -27,6 +27,13 @@ def Ball2D_(T):
             # two positions, two velocities
             self.DeclareContinuousState(2, 2, 0)
 
+            # Quadrotor states as inputs
+            for i in range(self.n_quadrotors):
+                self.DeclareVectorInputPort("quad_"+str(i), BasicVector_[T](6))
+            # Other ball states as inputs
+            for i in range(self.n_balls):
+                self.DeclareVectorInputPort("ball_"+str(i), BasicVector_[T](4))
+
             self.radius = 0.1
             self.mass = 1.0
             self.gravity = 9.81

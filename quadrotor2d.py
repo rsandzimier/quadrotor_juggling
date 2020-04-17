@@ -27,6 +27,13 @@ def Quadrotor2D_(T):
             # three positions, three velocities
             self.DeclareContinuousState(3, 3, 0)
 
+            # Other quadrotor states as inputs
+            for i in range(self.n_quadrotors):
+                self.DeclareVectorInputPort("quad_"+str(i), BasicVector_[T](6))
+            # Ball states as inputs
+            for i in range(self.n_balls):
+                self.DeclareVectorInputPort("ball_"+str(i), BasicVector_[T](4))
+
             # parameters based on [Bouadi, Bouchoucha, Tadjine, 2007]
             self.length = 0.25  # length of rotor arm
             self.mass = 0.486  # mass of quadrotor
