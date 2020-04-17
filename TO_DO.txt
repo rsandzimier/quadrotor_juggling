@@ -1,0 +1,2 @@
+Implement collision detection
+Implement collision dynamics
