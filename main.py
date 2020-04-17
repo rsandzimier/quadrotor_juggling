@@ -38,6 +38,28 @@ for _ in range(n_balls):
     plant = builder.AddSystem(Ball2D(n_quadrotors=n_quadrotors, n_balls=n_balls-1))
     ball_plants.append(plant)
 
+# Connect all plants so that each object (quadrotor or ball) has access to all other object states as inputs
+for i in range(n_quadrotors):
+    for j in range(n_quadrotors):
+        if i == j: 
+            continue
+        k = j if j < i else j-1
+        print ('quad',i,j,k)
+        builder.Connect(quadrotor_plants[j].get_output_port(0), quadrotor_plants[i].GetInputPort('quad_'+str(k)))
+    for j in range(n_balls):
+        print ('ball',i,j)
+        builder.Connect(ball_plants[j].get_output_port(0), quadrotor_plants[i].GetInputPort('ball_'+str(j)))
+for i in range(n_balls):
+    for j in range(n_quadrotors):
+        print ('quad',i,j)
+        builder.Connect(quadrotor_plants[j].get_output_port(0), ball_plants[i].GetInputPort('quad_'+str(j)))
+    for j in range(n_balls):
+        if i == j:
+            continue
+        k = j if j < i else j-1
+        print ('ball',i,j,k)
+        builder.Connect(ball_plants[j].get_output_port(0), ball_plants[i].GetInputPort('ball_'+str(k)))
+
 # Setup visualization
 visualizer = builder.AddSystem(Visualizer(n_quadrotors=n_quadrotors, n_balls=n_balls))
 for i in range(n_quadrotors):

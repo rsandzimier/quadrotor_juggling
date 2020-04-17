@@ -27,6 +27,30 @@ def Quadrotor2D_(T):
             # three positions, three velocities
             self.DeclareContinuousState(3, 3, 0)
 
+            # Other quadrotor states as inputs
+            max_quads = 5
+            # NOTE: For some reason, using a loop to call self.DeclareVectorInputPort n_quadrotors number
+            # of times leads to a segmentation fault. As a dirty fix, declare some hard-coded maximum number
+            # of vector inputs instead of using a for loop
+            assert n_quadrotors <= max_quads, "Max number of quadrotors exceeded in Quadrotor2D."
+            self.DeclareVectorInputPort("quad_0", BasicVector_[T](6))
+            self.DeclareVectorInputPort("quad_1", BasicVector_[T](6))
+            self.DeclareVectorInputPort("quad_2", BasicVector_[T](6))
+            self.DeclareVectorInputPort("quad_3", BasicVector_[T](6))
+            self.DeclareVectorInputPort("quad_4", BasicVector_[T](6))
+
+            # Ball states as inputs
+            max_balls = 5
+            # NOTE: For some reason, using a loop to call self.DeclareVectorInputPort n_balls number
+            # of times leads to a segmentation fault. As a dirty fix, declare some hard-coded maximum number
+            # of vector inputs instead of using a for loop
+            assert n_balls <= max_balls, "Max number of balls exceeded in Quadrotor2D."
+            self.DeclareVectorInputPort("ball_0", BasicVector_[T](4))
+            self.DeclareVectorInputPort("ball_1", BasicVector_[T](4))
+            self.DeclareVectorInputPort("ball_2", BasicVector_[T](4))
+            self.DeclareVectorInputPort("ball_3", BasicVector_[T](4))
+            self.DeclareVectorInputPort("ball_4", BasicVector_[T](4))
+
             # parameters based on [Bouadi, Bouchoucha, Tadjine, 2007]
             self.length = 0.25  # length of rotor arm
             self.mass = 0.486  # mass of quadrotor
