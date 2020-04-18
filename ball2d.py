@@ -75,11 +75,11 @@ def Ball2D_(T):
                     q_dash = R_i.dot(q - q_quad_i[:2])
                     qdot_dash = R_i.dot(qdot - qdot_quad_i[:2])
 
-                    if ((q_dash[0] > -self.width_quad ) and (q_dash[0] < self.width_quad ) and (q_dash[1] > 0) and (q_dash[1] < self.radius)):
+                    if q_dash[0] > -self.width_quad and q_dash[0] < self.width_quad and ((q_dash[1] >= 0 and q_dash[1] < self.radius) or (q_dash[1] < 0 and q_dash[1] > -self.radius)):
                         R_inv_i = np.array([[np.cos(-q_quad_i[2]) , -np.sin(-q_quad_i[2])],
                                             [np.sin(-q_quad_i[2]) ,  np.cos(-q_quad_i[2])]])
                         # add elastic force
-                        f += R_inv_i.dot((self.stiffness_ball) * np.array([0.0, self.radius-q_dash[1]]))
+                        f += R_inv_i.dot((self.stiffness_ball) * np.array([0.0, self.radius*np.sign(q_dash[1])-q_dash[1]]))
                         # f += R_inv_i.dot((self.stiffness_ball) * np.array([-np.sign(qdot_dash[0]).astype(float)*(self.radius-q_dash[1]), self.radius-q_dash[1]]))
 
                         # add damping force
