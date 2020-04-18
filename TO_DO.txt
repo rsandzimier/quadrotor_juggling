@@ -1,2 +1,7 @@
-Implement collision detection
-Implement collision dynamics
+Line search for number time steps
+Selecting quad to catch ball
+	Selecting a "free" quad copter
+	"marking" a quadcopter as not free after selection until impact
+Matching final conditions for the marked quadcopter with the marked ball
+Check to use optimizer for only free balls and free quadcopters
+	Return the same control inputs
