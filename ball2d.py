@@ -36,13 +36,12 @@ def Ball2D_(T):
             # Other ball states as inputs
             for i in range(self.n_balls):
                 self.DeclareVectorInputPort("ball_" + str(i), BasicVector_[T](4))
-
             self.radius = 0.1
             self.mass = 0.1
             self.gravity = 9.81
             self.mu = 0.3
             
-            self.stiffness_ball = 1000.0
+            self.stiffness_ball = 10000.0
             self.damping_ball = 0.0
 
             self.width_quad = 0.25

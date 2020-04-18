@@ -70,7 +70,8 @@ diagram = builder.Build()
 # plt.show()
 # Set up a simulator to run this diagram
 simulator = Simulator(diagram)
-
+integrator = simulator.get_mutable_integrator()
+integrator.set_maximum_step_size(0.01) # Reduce the max step size so that we can always detect collisions
 context = simulator.get_mutable_context()
 
 # state_init = np.array([-1.,1.,1.,0.,1.,1.,-1.,0.])
