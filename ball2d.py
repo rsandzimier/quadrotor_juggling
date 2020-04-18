@@ -38,8 +38,8 @@ def Ball2D_(T):
                 self.DeclareVectorInputPort("ball_" + str(i), BasicVector_[T](4))
 
             self.radius = 0.1
-            self.mass = 1.0
-            self.gravity = 9.81*0.0
+            self.mass = 0.1
+            self.gravity = 9.81
             self.mu = 0.3
             
             self.stiffness_ball = 1000.0
@@ -61,7 +61,7 @@ def Ball2D_(T):
 
             f = np.array([0.0,0.0])
 
-            print(np.linalg.norm(qdot))
+            # print(0.5*self.mass*np.linalg.norm(qdot)**2 + self.mass*self.gravity*q[1])
 
             if not isinstance(q[0], Expression): 
 
@@ -77,10 +77,8 @@ def Ball2D_(T):
                     qdot_dash = R_i.dot(qdot - qdot_quad_i[:2])
 
                     if ((q_dash[0] > -self.width_quad ) and (q_dash[0] < self.width_quad ) and (q_dash[1] > 0) and (q_dash[1] < self.radius)):
-
                         R_inv_i = np.array([[np.cos(-q_quad_i[2]) , -np.sin(-q_quad_i[2])],
                                             [np.sin(-q_quad_i[2]) ,  np.cos(-q_quad_i[2])]])
-
                         # add elastic force
                         f += R_inv_i.dot((self.stiffness_ball) * np.array([0.0, self.radius-q_dash[1]]))
                         # f += R_inv_i.dot((self.stiffness_ball) * np.array([-np.sign(qdot_dash[0]).astype(float)*(self.radius-q_dash[1]), self.radius-q_dash[1]]))
@@ -105,7 +103,7 @@ def Ball2D_(T):
                         # add damping force
                         f += (0.5*self.damping_ball) * -1.0* Delta_qdot 
 
-            qddot = f + np.array([0,-self.gravity])
+            qddot = f/self.mass + np.array([0,-self.gravity])
             derivatives.get_mutable_vector().SetFromVector(
                 np.concatenate((qdot, qddot)))
 
