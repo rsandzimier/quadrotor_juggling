@@ -44,20 +44,16 @@ for i in range(n_quadrotors):
         if i == j: 
             continue
         k = j if j < i else j-1
-        print ('quad',i,j,k)
         builder.Connect(quadrotor_plants[j].get_output_port(0), quadrotor_plants[i].GetInputPort('quad_'+str(k)))
     for j in range(n_balls):
-        print ('ball',i,j)
         builder.Connect(ball_plants[j].get_output_port(0), quadrotor_plants[i].GetInputPort('ball_'+str(j)))
 for i in range(n_balls):
     for j in range(n_quadrotors):
-        print ('quad',i,j)
         builder.Connect(quadrotor_plants[j].get_output_port(0), ball_plants[i].GetInputPort('quad_'+str(j)))
     for j in range(n_balls):
         if i == j:
             continue
         k = j if j < i else j-1
-        print ('ball',i,j,k)
         builder.Connect(ball_plants[j].get_output_port(0), ball_plants[i].GetInputPort('ball_'+str(k)))
 
 # Setup visualization

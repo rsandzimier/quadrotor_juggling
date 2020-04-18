@@ -28,21 +28,11 @@ def Quadrotor2D_(T):
             self.DeclareContinuousState(3, 3, 0)
 
             # Other quadrotor states as inputs
-            max_quads = 99
-            # NOTE: For some reason, using a loop to call self.DeclareVectorInputPort n_quadrotors number
-            # of times leads to a segmentation fault. As a dirty fix, declare some hard-coded maximum number
-            # of vector inputs instead of using a for loop
-            assert self.n_quadrotors <= max_quads, "Max number of quadrotors exceeded in Ball2D."
-            for i in range(max_quads):
+            for i in range(self.n_quadrotors):
                     self.DeclareVectorInputPort("quad_" + str(i), BasicVector_[T](6))
 
-            # Other ball states as inputs
-            max_balls = 99
-            # NOTE: For some reason, using a loop to call self.DeclareVectorInputPort n_balls number
-            # of times leads to a segmentation fault. As a dirty fix, declare some hard-coded maximum number
-            # of vector inputs instead of using a for loop
-            assert self.n_balls <= max_balls, "Max number of balls exceeded in Ball2D."
-            for i in range(max_balls):
+            # Ball states as inputs
+            for i in range(self.n_balls):
                 self.DeclareVectorInputPort("ball_" + str(i), BasicVector_[T](4))
 
             # parameters based on [Bouadi, Bouchoucha, Tadjine, 2007]
@@ -52,7 +42,7 @@ def Quadrotor2D_(T):
             self.gravity = 9.81  # gravity
 
         def _construct_copy(self, other, converter=None):
-            Impl._construct(self, converter=converter)
+            Impl._construct(self, n_quadrotors=other.n_quadrotors, n_balls=other.n_balls, converter=converter)
 
         def CopyStateOut(self, context, output):
             x = context.get_continuous_state_vector().CopyToVector()
