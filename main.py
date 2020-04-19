@@ -7,16 +7,20 @@ from quadrotor2d import Quadrotor2D
 from ball2d import Ball2D
 from visualization import Visualizer
 
-def QuadrotorLQR(plant):
+def QuadrotorLQR(plant, n_quadrotors, n_balls):
     context = plant.CreateDefaultContext()
     context.SetContinuousState(np.zeros([6, 1]))
     context.FixInputPort(0, plant.mass * plant.gravity / 2. * np.array([1, 1]))
+    for i in range(n_quadrotors):
+        context.FixInputPort(1 + i, np.ones(6))
+    for i in range(n_balls):
+        context.FixInputPort(1 + n_quadrotors + i, np.ones(4))
 
     Q = np.diag([10, 10, 10, 1, 1, (plant.length / 2. / np.pi)])
     R = np.array([[0.1, 0.05], [0.05, 0.1]])
 
     return LinearQuadraticRegulator(plant, context, Q, R)
-
+# 
 n_quadrotors = 1
 n_balls = 1
 
@@ -27,8 +31,8 @@ quadrotor_controllers = []
 for _ in range(n_quadrotors):
     plant = builder.AddSystem(Quadrotor2D(n_quadrotors=n_quadrotors-1, n_balls=n_balls))
     quadrotor_plants.append(plant)
-    controller = QuadrotorLQR(plant)
-    quadrotor_controllers = builder.AddSystem(controller)
+    controller = QuadrotorLQR(plant, n_quadrotors-1, n_balls)
+    quadrotor_controllers.append(builder.AddSystem(controller))
     builder.Connect(controller.get_output_port(0), plant.get_input_port(0))
     builder.Connect(plant.get_output_port(0), controller.get_input_port(0))
 
@@ -78,7 +82,8 @@ context = simulator.get_mutable_context()
 # state_init = np.random.randn(n_quadrotors*6 + n_balls*4,)
 # state_init = np.array([0.0 ,1.,0.,0., 0.0 ,1.3,0.,0.,0.,1.8,0.0,-0.8])
 # state_init = np.array([0.0, 0.0 , 0., 0., 0., 0.,  -1.0, 1.0, 0.8, -0.8])
-state_init = np.array([-1, -3 , 0.0, 0., 0., 0.,  0.0, 2.0, 0.0, 0.0])
+state_init = np.array([0.0, -1.0 , 0.0, 0., 0., 0.,  -0.2, 1.0, 0.0, -10.0])
+# state_init = np.array([0.0, -0.3 , 0.0, 0., 0., 0.,0.0, 0.3 , 0.0, 0., 0., 0.,  0.0, 0.0, 0.0, 0.0])
 
 # Simulate
 duration = 4.0
