@@ -12,7 +12,8 @@ class QuadController(VectorSystem):
 		self.n_quads = len(quad_plants)
 		self.n_balls = len(ball_plants)
         VectorSystem.__init__(self, self.n_x,  self.n_u)
-        
+        self.quad_plants = quad_plants
+        self.ball_plants = ball_plants
         # input controller
         self.u = u = np.empty((n_u, 1), dtype=Variable)
         
@@ -24,8 +25,12 @@ class QuadController(VectorSystem):
         # update controller internal memory
         self.last_state = state
         
-    # feel free to add methods to this class if you need to
-    # modify here
+    def dynamic_constraint_quad(self, state):
+
+    	return residuals
+    def dynamic_constraint_ball(self, state):
+
+    	return residuals
 	def optimization(self, quad_plants, ball_plants, contexts):
 		prog = MathematicalProgram()
 		#Time steps likely requires a line search. 
@@ -48,7 +53,11 @@ class QuadController(VectorSystem):
 		x[:,N-1] = prog.NewContinuousVariables(self.n_x, 'x' + str(N))
 
 		#Start at the correct initial conditions
-		x0 = #?
+		#Connect q
+		x0 = np.empty((self.n_x,1))
+		for k in range(n_quads + n_balls):
+			if k < n_quads:
+				x0[6*k:6*k+5] = self.quad_plants
 		prog.AddBoundingBoxConstraint(x0, x0, x[:,0])
 		for n in range(N-1):
 			for k in range(n_quads + n_balls):
