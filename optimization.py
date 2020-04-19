@@ -53,11 +53,11 @@ class QuadController(VectorSystem):
 		x[:,N-1] = prog.NewContinuousVariables(self.n_x, 'x' + str(N))
 
 		#Start at the correct initial conditions
-		#Connect q
+		#Connect quadrotor and ball state variables to the initial condition of mathprog
 		x0 = np.empty((self.n_x,1))
 		for k in range(n_quads + n_balls):
 			if k < n_quads:
-				x0[6*k:6*k+5] = self.quad_plants
+				x0[6*k:6*k+5] = self.quad_plants[k] #???
 		prog.AddBoundingBoxConstraint(x0, x0, x[:,0])
 		for n in range(N-1):
 			for k in range(n_quads + n_balls):
