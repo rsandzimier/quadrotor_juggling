@@ -30,7 +30,7 @@ quadrotor_plants = []
 quadrotor_controllers = []
 for i in range(n_quadrotors):
     new_quad = Quadrotor2D(n_quadrotors=n_quadrotors-1, n_balls=n_balls)
-    new_quad.set_name('quadcopter_' + str(i))
+    new_quad.set_name('quad_' + str(i))
     plant = builder.AddSystem(new_quad)
     quadrotor_plants.append(plant)
     controller = QuadrotorLQR(plant, n_quadrotors-1, n_balls)
@@ -71,15 +71,57 @@ for i in range(n_balls):
 # for i in range(n_balls):
 #     builder.Connect(ball_plants[i].get_output_port(0), visualizer.get_input_port(n_quadrotors + i))
 
+
+
 diagram = builder.Build()
+diagram.ToAutoDiffXd()
 context = diagram.CreateDefaultContext()
-print(diagram.EvalTimeDerivatives(context).get_vector())
+subsystem = diagram.GetSubsystemByName('quad_0')
+sub_context = diagram.GetMutableSubsystemContext(subsystem,context)
+# sub_context.SetContinuousState(np.array([0.0, -1.5 , 0.0, 0.]))
+# sub_context.FixInputPort(0,np.array([0.0,0.0]))
+# print(sub_context.ssxt))
+print(subsystem.EvalTimeDerivatives(sub_context))
 # EvalTimeDerivatives
 
-# def TemplateResidualFunction(vars):
-#     assert vars.size == 11*n_quadrotors + 6*n_balls
+def TemplateResidualFunction(vars_quads, vars_balls):
 
-# context.SetContinuousState(np.array([0.0, -1.5 , 0.0, 0.]))
+    context = diagram.CreateDefaultContext()
+    split_quad = [3,6,9]
+    split_ball = [2,4]
+
+    for i in range(n_quadrotors):
+        sub_system = diagram.GetSubsystemByName('quad_' + str(i))
+        sub_context = diagram.GetMutableSubsystemContext(sub_system,context)
+        q, qd, qdd, f = np.split(vars_quads[i], split_at)
+        sub_context.SetContinuousState(np.concatenate((q, qd)))
+        sub_context.FixInputPort(0, f)
+
+    for i in range(n_balls):
+        sub_system = diagram.GetSubsystemByName('ball_' + str(i))
+        sub_context = diagram.GetMutableSubsystemContext(sub_system,context)
+        q, qd, qdd = np.split(vars_balls[i], split_ball)
+        sub_context.SetContinuousState(np.concatenate((q, qd)))
+
+    diagram.EvalTimeDerivatives(context).get_vector()
+
+
+    # nq = 3*n_quadrotors + 2*n_balls
+    # split_at = [nq,2*nq,3*nq]
+    # q, qd, qdd, f = np.split(vars, split_at)
+
+    # continuous_state = np.array([])
+
+    # for i in range(n_quadrotors):
+    #     continuous_state = np.concatenate((continuous_state, q[3*i:3*(i+1)]))
+    #     continuous_state = np.concatenate((continuous_state,qd[3*i:3*(i+1)]))
+    
+    # for j in range(n_balls):
+    #     continuous_state = np.concatenate((continuous_state, q[3*(i+1)+2*i:3*(i+1)+2*(i+1)]))
+    #     continuous_state = np.concatenate((continuous_state,qd[3*(i+1)+2*i:3*(i+1)+2*(i+1)]))
+
+
+
 
 # plt.figure(figsize=(20, 10))
 # plot_system_graphviz(diagram)
