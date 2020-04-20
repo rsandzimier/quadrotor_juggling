@@ -31,6 +31,7 @@ class QuadController(VectorSystem):
     def dynamic_constraint_ball(self, state):
 
     	return residuals
+
 	def optimization(self, quad_plants, ball_plants, contexts):
 		prog = MathematicalProgram()
 		#Time steps likely requires a line search. 
@@ -64,10 +65,8 @@ class QuadController(VectorSystem):
 				#Handles no collisions
 				if k < n_quads:
 					#Quad dynamic constraints
-					dynamics_constraint_vel = eq(x[k*6:k*6+2,[n+1]], x[k*6+3:k*6+5,[n]])
-					dynamics_constraint_acc = eq(x[k*6+3:k*6+5,[n+1]], np.array([-(u[k,[n]] + u[k+1,[n]])* np.sin(x[k*6+2,[n]])/mass,
-																			(u[k,[n]] + u[k+1,[n]])*np.cos(x[k*6+2,[n]])/mass - g,
-																			r*(u[k,[n]] - u[k+1,[n]])/I]))
+					dynamics_constraint_vel = #?
+					dynamics_constraint_acc = #?
 					prog.AddConstraint(dynamics_constraint_vel[0, 0])
 	  				prog.AddConstraint(dynamics_constraint_vel[1, 0])
 					prog.AddConstraint(dynamics_constraint_vel[2, 0])
@@ -76,8 +75,8 @@ class QuadController(VectorSystem):
 					prog.AddConstraint(dynamics_constraint_acc[2, 0])
 				else:
 					#Ball dynamic constraints
-					dynamics_constraint_vel = eq(x[4*k+6*n_quads+1:4*k+6*n_quads+2,[n+1]], x[4*k+6*n_quads+3:4*k+6*n_quads+4,[n]])
-					dynamics_constraint_acc = eq(x[4*k+6*n_quads+3:4*k+6*n_quads+4,[n+1]], np.array([0, -g]))
+					dynamics_constraint_vel = #
+					dynamics_constraint_acc = #
 					prog.AddConstraint(dynamics_constraint_vel[0, 0])
 					prog.AddConstraint(dynamics_constraint_vel[1, 0])
 					prog.AddConstraint(dynamics_constraint_acc[0, 0])
