@@ -111,34 +111,52 @@ def TemplateResidualFunction(vars):
 
 prog = MathematicalProgram()
 # vector of the time intervals
-T = 200#Number of breakpoints
+T = 300#Number of breakpoints
 # (distances between the T + 1 break points)
-h = prog.NewContinuousVariables(T, name='h')
+n_subintervals = 2
 nq_quad = 3
 n_u = 2
-# system configuration, generalized velocities, and accelerations
+n_h = T*n_subintervals
 u = prog.NewContinuousVariables(rows=T, cols = n_u, name = 'u')
 q = prog.NewContinuousVariables(rows=T+1, cols=nq_quad, name='q')
-qd = prog.NewContinuousVariables(rows=T+1, cols=nq_quad, name='qd')
-qdd = prog.NewContinuousVariables(rows=T, cols=nq_quad, name='qdd')
-h_min = 0.001
+qd = prog.NewContinuousVariables(rows=T*n_subintervals+1, cols=nq_quad, name='qd')
+qdd = prog.NewContinuousVariables(rows=T*n_subintervals, cols=nq_quad, name='qdd')
+#h = prog.NewContinuousVariables(rows=n_h, name='h')
+# system configuration, generalized velocities, and accelerations
+h_min = 0.01
 h_max = 0.01
-prog.AddBoundingBoxConstraint([h_min] * T, [h_max] * T, h)
+#prog.AddBoundingBoxConstraint([h_min] * T, [h_max] * T, h)
+h = h_min
+# # Implicit euler constraints for velocity and acceleration
+# for t in range(T):
+#     prog.AddConstraint(eq(q[t+1], q[t] + h[t] * qd[t+1]))
+#     prog.AddConstraint(eq(qd[t+1], qd[t] + h[t] * qdd[t]))
 
-# Implicit euler constraints for velocity and acceleration
+# # residual equations for all t using Implicit Euler
+# for t in range(T):
+#     vars_quads = [np.concatenate((q[t+1], qd[t+1], qdd[t], u[t]))]
+#     vars_balls = []
+#     vars = pack_vars(vars_quads, vars_balls)
+#     nqdd = nq_quad*n_quadrotors
+#     prog.AddConstraint(TemplateResidualFunction, lb=[0]*nqdd, ub=[0]*nqdd, vars =  vars)
+
+#Implicit euler constraints for velocity and acceleration
 for t in range(T):
-    prog.AddConstraint(eq(q[t+1], q[t] + h[t] * qd[t+1]))
-    prog.AddConstraint(eq(qd[t+1], qd[t] + h[t] * qdd[t]))
+    t_sub = n_subintervals*t
+    prog.AddConstraint(eq(q[t+1], q[t] + h/3*(qd[t_sub]+4*qd[t_sub+1] + qd[t_sub+2])))
+
+for t in range(T*n_subintervals):
+    prog.AddConstraint(eq(qd[t+1], qd[t] + h/3 * qdd[t]))
 
 # residual equations for all t using Implicit Euler
 for t in range(T):
-    vars_quads = [np.concatenate((q[t+1], qd[t+1], qdd[t], u[t]))]
+    vars_quads = [np.concatenate((q[t+1], qd[(t+1)*n_subintervals], qdd[t*n_subintervals], u[t]))]
     vars_balls = []
     vars = pack_vars(vars_quads, vars_balls)
     nqdd = nq_quad*n_quadrotors
     prog.AddConstraint(TemplateResidualFunction, lb=[0]*nqdd, ub=[0]*nqdd, vars =  vars)
 
-state_init = np.array([-1.5, -1.0 , -1.1, 0., 0., 0.0])
+state_init = np.array([0.,0.,0.,0.,0.,1.])
 state_final = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 split_quad = [3,6]
 
@@ -154,8 +172,8 @@ prog.AddLinearConstraint(eq(q[T], qf))
 prog.AddLinearConstraint(eq(qd[T], qdf))
 
 for t in range(T):
-    prog.AddLinearConstraint(ge(u[t],np.zeros(2)))
-    prog.AddLinearConstraint(le(u[t],10*np.ones(2)))
+    prog.AddLinearConstraint(ge(u[t],0*np.ones(2)))
+    prog.AddLinearConstraint(le(u[t],20*np.ones(2)))
 ###############################################################################
 # Set up initial guesses
 # vector of the initial guess
@@ -163,10 +181,10 @@ initial_guess = np.empty(prog.num_vars())
 
 # initial guess for the time step
 h_guess = h_max
-prog.SetDecisionVariableValueInVector(h, [h_guess] * T, initial_guess)
+#prog.SetDecisionVariableValueInVector(h, [h_guess] * T, initial_guess)
 
 # linear interpolation of the configuration
-q0_guess = np.array([0, -1.0, 0])
+q0_guess = np.array([-1.,1.,1.])
 q_guess_poly = PiecewisePolynomial.FirstOrderHold(
     [0, T * h_guess],
     np.column_stack((q0_guess, - q0_guess))
@@ -176,8 +194,12 @@ qdd_guess_poly = q_guess_poly.derivative()
 
 # set initial guess for configuration, velocity, and acceleration
 q_guess = np.hstack([q_guess_poly.value(t * h_guess) for t in range(T + 1)]).T
-qd_guess = np.hstack([qd_guess_poly.value(t * h_guess) for t in range(T + 1)]).T
-qdd_guess = np.hstack([qdd_guess_poly.value(t * h_guess) for t in range(T)]).T
+qd_guess = np.hstack([qd_guess_poly.value(t * h_guess/3) for t in range(T*n_subintervals+1)]).T*n_subintervals
+qdd_guess = np.hstack([qdd_guess_poly.value(t * h_guess/3) for t in range(T*n_subintervals)]).T*n_subintervals
+print(len(q_guess))
+print(len(qd_guess))
+print(len(qdd_guess))
+
 prog.SetDecisionVariableValueInVector(q, q_guess, initial_guess)
 prog.SetDecisionVariableValueInVector(qd, qd_guess, initial_guess)
 prog.SetDecisionVariableValueInVector(qdd, qdd_guess, initial_guess)
@@ -192,17 +214,13 @@ print(f'Solution found? {result.is_success()}.')
 #################################################################################
 # Extract results
 # get optimal solution
-h_opt = result.GetSolution(h)
 q_opt = result.GetSolution(q)
 qd_opt = result.GetSolution(qd)
 qdd_opt = result.GetSolution(qdd)
 u_opt = result.GetSolution(u)
-
+time_breaks_opt = np.array([t*h for t in range(T)])
 ##################################################################################
 # Setup diagram for simulation
-time_breaks_opt = np.array([sum(h_opt[:t]) for t in range(T)])
-print(time_breaks_opt[-1])
-print(dir(PiecewisePolynomial))
 u_opt_poly = PiecewisePolynomial.ZeroOrderHold(time_breaks_opt, u_opt.T)
 diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=True, trajectory=u_opt_poly)
 # print(u_opt_poly)
@@ -216,7 +234,6 @@ simulator = Simulator(diagram)
 integrator = simulator.get_mutable_integrator()
 integrator.set_maximum_step_size(0.01) # Reduce the max step size so that we can always detect collisions
 context = simulator.get_mutable_context()
-
 ##############################################3
 # state_init = np.array([-1.,1.,1.,0.,1.,1.,-1.,0.])
 # state_init = np.random.randn(n_quadrotors*6 + n_balls*4,)
@@ -227,7 +244,8 @@ context = simulator.get_mutable_context()
 # state_init = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 # # Simulate
 duration = time_breaks_opt[-1]
-context.SetTime(0.)
-context.SetContinuousState(state_init)
-simulator.Initialize()
-simulator.AdvanceTo(duration)
+for i in range(1):
+    context.SetTime(0.)
+    context.SetContinuousState(state_init)
+    simulator.Initialize()
+    simulator.AdvanceTo(duration)
