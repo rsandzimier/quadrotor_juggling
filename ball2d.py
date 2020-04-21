@@ -5,6 +5,7 @@ from pydrake.systems.pyplot_visualizer import PyPlotVisualizer
 from pydrake.systems.scalar_conversion import TemplateSystem
 from pydrake.symbolic import Expression
 import time
+from collisions import CalcSignedInterferenceBallBall, CalcSignedInterferenceBallQuad, CalcDampedVelocityBall
 
 # Note: In order to use the Python system with drake's autodiff features, we
 # have to add a little "TemplateSystem" boilerplate (for now).  For details,
@@ -36,16 +37,15 @@ def Ball2D_(T):
             # Other ball states as inputs
             for i in range(self.n_balls):
                 self.DeclareVectorInputPort("ball_" + str(i), BasicVector_[T](4))
-
             self.radius = 0.1
-            self.mass = 1.0
-            self.gravity = 9.81*0.0
+            self.mass = 0.1
+            self.gravity = 9.81
             self.mu = 0.3
             
-            self.stiffness_ball = 1000.0
+            self.stiffness_ball = 10000.0
             self.damping_ball = 0.0
 
-            self.width_quad = 0.25
+            self.width_quad = 0.3
 
         def _construct_copy(self, other, converter=None):
             Impl._construct(self, n_quadrotors=other.n_quadrotors, n_balls=other.n_balls, converter=converter)
@@ -61,51 +61,42 @@ def Ball2D_(T):
 
             f = np.array([0.0,0.0])
 
-            print(np.linalg.norm(qdot))
+            # print(0.5*self.mass*np.linalg.norm(qdot)**2 + self.mass*self.gravity*q[1])
 
             if not isinstance(q[0], Expression): 
 
-                # calculate collisions with quadrotos
+                # calculate collisions with quadrotors
                 for i in range(self.n_quadrotors):
                     x_quad_i = self.EvalVectorInput(context,i).CopyToVector()
                     q_quad_i = x_quad_i[:3]
                     qdot_quad_i = x_quad_i[3:]
-                    R_i = np.array([[np.cos(q_quad_i[2]) , -np.sin(q_quad_i[2])],
-                                    [np.sin(q_quad_i[2]) ,  np.cos(q_quad_i[2])]])
 
-                    q_dash = R_i.dot(q - q_quad_i[:2])
-                    qdot_dash = R_i.dot(qdot - qdot_quad_i[:2])
+                    signed_interference = CalcSignedInterferenceBallQuad(q, q_quad_i)
+                    qdot_diff = qdot - qdot_quad_i[:2]
+                    qdot_damped = CalcDampedVelocityBall(qdot_diff, signed_interference) # Only damp the component of velocity parallel to the interference
 
-                    if ((q_dash[0] > -self.width_quad ) and (q_dash[0] < self.width_quad ) and (q_dash[1] > 0) and (q_dash[1] < self.radius)):
-
-                        R_inv_i = np.array([[np.cos(-q_quad_i[2]) , -np.sin(-q_quad_i[2])],
-                                            [np.sin(-q_quad_i[2]) ,  np.cos(-q_quad_i[2])]])
-
-                        # add elastic force
-                        f += R_inv_i.dot((self.stiffness_ball) * np.array([0.0, self.radius-q_dash[1]]))
-                        # f += R_inv_i.dot((self.stiffness_ball) * np.array([-np.sign(qdot_dash[0]).astype(float)*(self.radius-q_dash[1]), self.radius-q_dash[1]]))
-
-                        # add damping force
-                        f += R_inv_i.dot((self.damping_ball) * np.array([0.0, -qdot_dash[1]]))
+                    # add elastic force
+                    f += self.stiffness_ball * signed_interference
+                    # add damping force
+                    f += -self.damping_ball*qdot_damped
 
                 # calculate forces from collision with other balls
                 for i in range(self.n_quadrotors,self.n_quadrotors + self.n_balls):
                     x_ball_i = self.EvalVectorInput(context,i).CopyToVector()
                     q_ball_i = x_ball_i[:2]
                     qdot_ball_i = x_ball_i[2:]
+                    signed_interference = CalcSignedInterferenceBallBall(q, q_ball_i)
 
-                    Delta_q = q - q_ball_i
-                    Delta_qdot = qdot - qdot_ball_i
+                    qdot_diff = qdot - qdot_ball_i
+                    qdot_damped = CalcDampedVelocityBall(qdot_diff, signed_interference) # Only damp the component of velocity parallel to the interference
 
-                    dist = np.linalg.norm(Delta_q)
 
-                    if dist <= 2*self.radius:
-                        # add elastic force
-                        f += (0.5*self.stiffness_ball) * Delta_q * (2*self.radius - dist)/dist
-                        # add damping force
-                        f += (0.5*self.damping_ball) * -1.0* Delta_qdot 
+                    # add elastic force
+                    f += self.stiffness_ball*signed_interference
+                    # add damping force
+                    f += -self.damping_ball*qdot_damped
 
-            qddot = f + np.array([0,-self.gravity])
+            qddot = f/self.mass + np.array([0,-self.gravity])
             derivatives.get_mutable_vector().SetFromVector(
                 np.concatenate((qdot, qddot)))
 
