@@ -226,7 +226,7 @@ context = simulator.get_mutable_context()
 # state_init = np.array([0.0, -0.3 , 0.0, 0., 0., 0.,0.0, 0.3 , 0.0, 0., 0., 0.,  0.0, 0.0, 0.0, 0.0])
 # state_init = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 # # Simulate
-duration = time_breaks_opt[-1]
+duration = sum(h_opt)
 context.SetTime(0.)
 context.SetContinuousState(state_init)
 simulator.Initialize()
