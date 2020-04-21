@@ -6,7 +6,8 @@ from pydrake.all import DiagramBuilder, LinearQuadraticRegulator, Simulator, plo
 from pydrake.all import (MultibodyPlant, Parser, DiagramBuilder,
                          PlanarSceneGraphVisualizer, SceneGraph, TrajectorySource,
                          SnoptSolver, MultibodyPositionToGeometryPose, PiecewisePolynomial,
-                         MathematicalProgram, JacobianWrtVariable, eq, le, ge)
+                         MathematicalProgram, JacobianWrtVariable, eq, le, ge,IpoptSolver)
+from pydrake.autodiffutils import autoDiffToValueMatrix
 from quadrotor2d import Quadrotor2D
 from ball2d import Ball2D
 from visualization import Visualizer
@@ -95,6 +96,7 @@ def TemplateResidualFunction(vars):
     context = diagram.CreateDefaultContext()
     split_quad = [3,6,9]
     split_ball = [2,4]
+
     for i in range(n_quadrotors):
         sub_system = diagram.GetSubsystemByName('quad_' + str(i))
         sub_context = diagram.GetMutableSubsystemContext(sub_system,context)
@@ -107,13 +109,77 @@ def TemplateResidualFunction(vars):
         sub_context = diagram.GetMutableSubsystemContext(sub_system,context)
         q, qd, qdd = np.split(vars_balls[i], split_ball)
         sub_context.SetContinuousState(np.concatenate((q, qd)))
+
     return qdd - diagram.EvalTimeDerivatives(context).CopyToVector()[3:]
+
+def create_context(vars):
+    vars_quads, vars_balls = unpack_vars(vars)
+    context = diagram.CreateDefaultContext()
+    split_quad = [3,6,9]
+    split_ball = [2,4]
+
+    for i in range(n_quadrotors):
+        sub_system = diagram.GetSubsystemByName('quad_' + str(i))
+        sub_context = diagram.GetMutableSubsystemContext(sub_system,context)
+        q, qd, qdd, f = np.split(vars_quads[i], split_quad)
+        sub_context.SetContinuousState(np.concatenate((q, qd)))
+        sub_context.FixInputPort(0, f)
+
+    for i in range(n_balls):
+        sub_system = diagram.GetSubsystemByName('ball_' + str(i))
+        sub_context = diagram.GetMutableSubsystemContext(sub_system,context)
+        q, qd, qdd = np.split(vars_balls[i], split_ball)
+        sub_context.SetContinuousState(np.concatenate((q, qd)))
+
+    return context
+
+def CollResid(vars):
+    
+    vars_k = vars[:11]
+    vars_kplus = vars[11:]
+
+    context = diagram.CreateDefaultContext()
+    split_quad = [3,6,9]
+    split_ball = [2,4]
+
+    #This is sketchily written and will only for one quad
+    vars_quads_k, vars_balls_k = unpack_vars(vars_k)
+    vars_quads_kplus, vars_balls_kplus = unpack_vars(vars_k)
+    _,_,_,f_k     = np.split(vars_quads_k[0], split_quad)
+    _,_,_,f_kplus = np.split(vars_quads_kplus[0], split_quad)
+
+    context_k = create_context(vars_k)
+    context_kplus  = create_context(vars_kplus)
+    
+    x_k = context_k.get_continuous_state_vector().CopyToVector()
+    x_kplus = context_kplus.get_continuous_state_vector().CopyToVector()
+
+    x_dot_k = diagram.EvalTimeDerivatives(context_k).CopyToVector()[:]
+    x_dot_kplus = diagram.EvalTimeDerivatives(context_kplus).CopyToVector()[:]
+
+    x_ck =  0.5*(x_k + x_kplus)   + 0.125*h*(x_dot_k - x_dot_kplus)
+    x_dot_ck = (-1.5/h)*(x_k - x_kplus) - 0.25*(x_dot_k + x_dot_kplus)
+    f_ck = 0.5*(f_k + f_kplus)
+
+    context_c = diagram.CreateDefaultContext()
+    context_c.SetContinuousState(x_ck)
+    sub_system = diagram.GetSubsystemByName('quad_0')
+    sub_context = diagram.GetMutableSubsystemContext(sub_system,context_c)
+    sub_context.FixInputPort(0, f_ck)
+
+    return x_dot_ck - diagram.EvalTimeDerivatives(context_c).CopyToVector()[:]
 
 prog = MathematicalProgram()
 # vector of the time intervals
-T = 200#Number of breakpoints
+T = 400#Number of breakpoints
 # (distances between the T + 1 break points)
-h = prog.NewContinuousVariables(T, name='h')
+
+h = 0.02
+# h = prog.NewContinuousVariables(T, name='h')
+# h_min = 0.001
+# h_max = 0.01
+# prog.AddBoundingBoxConstraint([h_min] * T, [h_max] * T, h)
+
 nq_quad = 3
 n_u = 2
 # system configuration, generalized velocities, and accelerations
@@ -121,24 +187,49 @@ u = prog.NewContinuousVariables(rows=T, cols = n_u, name = 'u')
 q = prog.NewContinuousVariables(rows=T+1, cols=nq_quad, name='q')
 qd = prog.NewContinuousVariables(rows=T+1, cols=nq_quad, name='qd')
 qdd = prog.NewContinuousVariables(rows=T, cols=nq_quad, name='qdd')
-h_min = 0.001
-h_max = 0.01
-prog.AddBoundingBoxConstraint([h_min] * T, [h_max] * T, h)
+
+
 
 # Implicit euler constraints for velocity and acceleration
-for t in range(T):
-    prog.AddConstraint(eq(q[t+1], q[t] + h[t] * qd[t+1]))
-    prog.AddConstraint(eq(qd[t+1], qd[t] + h[t] * qdd[t]))
+# for t in range(T):
+#     # prog.AddConstraint(eq(q[t+1], q[t] + h[t] * qd[t]))
+#     # prog.AddConstraint(eq(qd[t+1], qd[t] + h[t] * qdd[t]))
+#     prog.AddConstraint(eq(q[t+1], q[t] + h * qd[t]))
+#     prog.AddConstraint(eq(qd[t+1], qd[t] + h * qdd[t]))
 
-# residual equations for all t using Implicit Euler
-for t in range(T):
-    vars_quads = [np.concatenate((q[t+1], qd[t+1], qdd[t], u[t]))]
+# # residual equations for all t using Implicit Euler
+# for t in range(T):
+#     vars_quads = [np.concatenate((q[t+1], qd[t+1], qdd[t], u[t]))]
+#     vars_balls = []
+#     vars = pack_vars(vars_quads, vars_balls)
+#     nqdd = nq_quad*n_quadrotors
+#     prog.AddConstraint(TemplateResidualFunction, lb=[0]*nqdd, ub=[0]*nqdd, vars = vars)
+
+for t in range(T-1):
+    vars_quads = [np.concatenate((q[t], qd[t], qdd[t], u[t]))]
     vars_balls = []
-    vars = pack_vars(vars_quads, vars_balls)
-    nqdd = nq_quad*n_quadrotors
-    prog.AddConstraint(TemplateResidualFunction, lb=[0]*nqdd, ub=[0]*nqdd, vars =  vars)
+    vars_k = pack_vars(vars_quads, vars_balls)
 
-state_init = np.array([0.5, -1.0 , 0.1, 0., 0., 0.0])
+    vars_quads = [np.concatenate((q[t+1], qd[t+1], qdd[t+1], u[t+1]))]
+    vars_balls = []
+    vars_kplus = pack_vars(vars_quads, vars_balls)
+
+    vars = np.concatenate((vars_k,vars_kplus))
+    nqdd = nq_quad*n_quadrotors*2
+    prog.AddConstraint(CollResid, lb=[0]*nqdd, ub=[0]*nqdd, vars = vars)
+
+
+# for t in range(T-1):
+    # inputs to Coll_resid
+    # u_ct = 0.5*(u[t] + u[t+1])
+    # x_ct = 0.5*(q[t]+q[t+1])   + 0.125*h*(qd[t] - qd[t+1])
+    # v_ct = 0.5*(qd[t]+qd[t+1]) + 0.125*h*(qdd[t] - qdd[t+1])
+    
+    # [np.concatenate((q[t+1], qd[t+1], qdd[t], u[t]))]
+    # qd_ct = 
+    # qdd_ct =
+
+state_init = np.array([0.5, 0.0 , 0.0, 0., 0., 0.0])
 state_final = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 split_quad = [3,6]
 
@@ -149,7 +240,7 @@ prog.AddLinearConstraint(eq(q[0], q0))
 prog.AddLinearConstraint(eq(qd[0], qd0))
 
 # Final conditions
-qf, qdf= np.split(state_final, [3])
+qf, qdf = np.split(state_final, [3])
 prog.AddLinearConstraint(eq(q[T], qf))
 prog.AddLinearConstraint(eq(qd[T], qdf))
 
@@ -162,22 +253,22 @@ for t in range(T):
 initial_guess = np.empty(prog.num_vars())
 
 # initial guess for the time step
-h_guess = h_max
-prog.SetDecisionVariableValueInVector(h, [h_guess] * T, initial_guess)
+# h_guess = h_max
+# prog.SetDecisionVariableValueInVector(h, [h_guess] * T, initial_guess)
 
 # linear interpolation of the configuration
 q0_guess = np.array([0, -1.0, 0])
 q_guess_poly = PiecewisePolynomial.FirstOrderHold(
-    [0, T * h_guess],
+    [0, T * h],
     np.column_stack((q0_guess, - q0_guess))
 )
 qd_guess_poly = q_guess_poly.derivative()
 qdd_guess_poly = q_guess_poly.derivative()
 
 # set initial guess for configuration, velocity, and acceleration
-q_guess = np.hstack([q_guess_poly.value(t * h_guess) for t in range(T + 1)]).T
-qd_guess = np.hstack([qd_guess_poly.value(t * h_guess) for t in range(T + 1)]).T
-qdd_guess = np.hstack([qdd_guess_poly.value(t * h_guess) for t in range(T)]).T
+q_guess = np.hstack([q_guess_poly.value(t * h) for t in range(T + 1)]).T
+qd_guess = np.hstack([qd_guess_poly.value(t * h) for t in range(T + 1)]).T
+qdd_guess = np.hstack([qdd_guess_poly.value(t * h) for t in range(T)]).T
 prog.SetDecisionVariableValueInVector(q, q_guess, initial_guess)
 prog.SetDecisionVariableValueInVector(qd, qd_guess, initial_guess)
 prog.SetDecisionVariableValueInVector(qdd, qdd_guess, initial_guess)
@@ -192,7 +283,7 @@ print(f'Solution found? {result.is_success()}.')
 #################################################################################
 # Extract results
 # get optimal solution
-h_opt = result.GetSolution(h)
+# h_opt = result.GetSolution(h)
 q_opt = result.GetSolution(q)
 qd_opt = result.GetSolution(qd)
 qdd_opt = result.GetSolution(qdd)
@@ -200,9 +291,9 @@ u_opt = result.GetSolution(u)
 
 ##################################################################################
 # Setup diagram for simulation
-time_breaks_opt = np.array([sum(h_opt[:t]) for t in range(T)])
+time_breaks_opt = np.array([t*h for t in range(T)])
 print(time_breaks_opt[-1])
-u_opt_poly = PiecewisePolynomial.FirstOrderHold(time_breaks_opt, u_opt.T)
+u_opt_poly = PiecewisePolynomial.ZeroOrderHold(time_breaks_opt, u_opt.T)
 diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=True, trajectory=u_opt_poly)
 # print(u_opt_poly)
 ###################################################################################

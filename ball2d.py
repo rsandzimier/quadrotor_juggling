@@ -39,7 +39,7 @@ def Ball2D_(T):
                 self.DeclareVectorInputPort("ball_" + str(i), BasicVector_[T](4))
             self.radius = 0.1
             self.mass = 0.1
-            self.gravity = 9.81
+            self.gravity = 0.81
             self.mu = 0.3
             
             self.stiffness_ball = 10000.0
