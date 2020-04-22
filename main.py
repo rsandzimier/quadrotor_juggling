@@ -7,13 +7,13 @@ from pydrake.all import (MultibodyPlant, Parser, DiagramBuilder,
                          PlanarSceneGraphVisualizer, SceneGraph, TrajectorySource,
                          SnoptSolver, MultibodyPositionToGeometryPose, PiecewisePolynomial,
                          MathematicalProgram, JacobianWrtVariable, eq, le, ge,IpoptSolver, DirectCollocation,
-                         InputPortIndex)
+                         InputPortIndex, Demultiplexer)
 from pydrake.autodiffutils import autoDiffToValueMatrix
 from quadrotor2d import Quadrotor2D
 from ball2d import Ball2D
 from visualization import Visualizer
 
-n_quadrotors = 1
+n_quadrotors = 2
 n_balls = 0
 
 def makeDiagram(n_quadrotors, n_balls, use_visualizer=False, trajectory=None):
@@ -25,8 +25,6 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False, trajectory=None):
         new_quad = Quadrotor2D(n_quadrotors=n_quadrotors-1, n_balls=n_balls)
         new_quad.set_name('quad_' + str(i))
         plant = builder.AddSystem(new_quad)
-        if trajectory is None:
-            builder.ExportInput(plant.get_input_port(0))
         quadrotor_plants.append(plant)
 
     # Setup ball plants
@@ -62,24 +60,35 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False, trajectory=None):
             builder.Connect(quadrotor_plants[i].get_output_port(0), visualizer.get_input_port(i))
         for i in range(n_balls):
             builder.Connect(ball_plants[i].get_output_port(0), visualizer.get_input_port(n_quadrotors + i))
+
     # Setup trajectory source
+    demulti = builder.AddSystem(Demultiplexer(2*n_quadrotors, 2))
+    for i in range(n_quadrotors):
+            builder.Connect(demulti.get_output_port(i), quadrotor_plants[i].get_input_port(0))
+
     if trajectory is not None:
         source = builder.AddSystem(TrajectorySource(trajectory))
-        builder.Connect(source.get_output_port(0), quadrotor_plants[0].get_input_port(0))
+        builder.Connect(source.get_output_port(0), demulti.get_input_port(0))
+    else:
+        builder.ExportInput(demulti.get_input_port(0))
 
     diagram = builder.Build()
     return diagram
 
 diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=False)
-
+# plt.figure(figsize=(20, 10))
+# plot_system_graphviz(diagram)
+# plt.show()
 context = diagram.CreateDefaultContext()
 T = 200 #Number of breakpoints
 h_min = 0.001
-h_max = 0.01
+h_max = 0.02
 prog = DirectCollocation(diagram, context, T, h_min, h_max)
 
-state_init = np.array([-1.5, -1.0 , -1.1, 0., 0., 0.0])
-state_final = np.array([0.0, 0.0, -np.pi/4, 1.0, 1.0, 0.0])
+state_init = np.array([-1.0, 0.0 , 0.0, 0.0, 0.0, 0.0, 1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
+state_final = np.array([1.0, 0.0 , 0.0, 0.0, 0.0, 0.0, -1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
+# state_init = np.array([-1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
+# state_final = np.array([1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
 
 # Initial conditions
 prog.AddLinearConstraint(eq(prog.initial_state(), state_init))
@@ -88,15 +97,26 @@ prog.AddLinearConstraint(eq(prog.initial_state(), state_init))
 prog.AddLinearConstraint(eq(prog.final_state(), state_final))
 
 # Input constraints
-prog.AddConstraintToAllKnotPoints(prog.input()[0]>=0.0)
-prog.AddConstraintToAllKnotPoints(prog.input()[0]<=10.0)
-prog.AddConstraintToAllKnotPoints(prog.input()[1]>=0.0)
-prog.AddConstraintToAllKnotPoints(prog.input()[1]<=10.0)
+for i in range(n_quadrotors):
+    prog.AddConstraintToAllKnotPoints(prog.input()[2*i]>=0.0)
+    prog.AddConstraintToAllKnotPoints(prog.input()[2*i]<=10.0)
+    prog.AddConstraintToAllKnotPoints(prog.input()[2*i+1]>=0.0)
+    prog.AddConstraintToAllKnotPoints(prog.input()[2*i+1]<=10.0)
+
+# Don't allow quadrotor collisions
+for i in range(n_quadrotors):
+    for j in range(i+1, n_quadrotors):
+        prog.AddConstraintToAllKnotPoints((prog.state()[6*i]-prog.state()[6*j])**2 +
+                                        (prog.state()[6*i+1]-prog.state()[6*j+1])**2 >= 0.65**2)
+
 
 ###############################################################################
 # Set up initial guesses
-# ??? There is a way to do this for DirectCollocation. See DirectCollocation.SetInitialTrajectory()
-# But we currently don't set an initial trajectory
+plant = Quadrotor2D()
+h_init = h_max
+x_initial = PiecewisePolynomial.FirstOrderHold([0, T * h_init], np.column_stack((state_init, state_final)))
+u_initial = PiecewisePolynomial.ZeroOrderHold([0, T * h_init], 0.5*plant.mass*plant.gravity*np.ones((2*n_quadrotors,2)))
+prog.SetInitialTrajectory(u_initial, x_initial)
 
 solver = SnoptSolver()
 print("Solving...")
@@ -140,17 +160,24 @@ context.SetContinuousState(state_init)
 simulator.Initialize()
 
 # Plot
-q_opt = np.zeros((100,6))
-q_actual = np.zeros((100,6))
+q_opt = np.zeros((100,6*n_quadrotors))
+q_actual = np.zeros((100,6*n_quadrotors))
 for i in range(100):
     t = t_arr[i]
     simulator.AdvanceTo(t_arr[i])
     q_opt[i,:] = x_opt_poly.value(t).flatten()
     q_actual[i,:] = context.get_continuous_state_vector().CopyToVector()
 
-plt.figure()
-plt.plot(t_arr, q_opt[:,:3])
-plt.plot(t_arr, q_actual[:,:3])
-plt.figure()
-plt.plot(t_arr, q_actual[:,:3]-q_opt[:,:3])
+for i in range(n_quadrotors):
+    ind_i = 6*i
+    ind_f = ind_i + 3
+    plt.figure()
+    plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+    plt.plot(t_arr, q_actual[:,ind_i:ind_f])
+    plt.figure()
+    plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
+
+if n_quadrotors >= 2:
+    plt.figure()
+    plt.plot(t_arr, np.linalg.norm(q_actual[:,0:2] - q_actual[:,6:8], axis=1))
 plt.show()
