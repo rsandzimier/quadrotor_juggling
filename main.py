@@ -13,8 +13,8 @@ from quadrotor2d import Quadrotor2D
 from ball2d import Ball2D
 from visualization import Visualizer
 
-n_quadrotors = 2
-n_balls = 0
+n_quadrotors = 1
+n_balls = 1
 
 def makeDiagram(n_quadrotors, n_balls, use_visualizer=False, trajectory=None):
     builder = DiagramBuilder()
@@ -85,8 +85,8 @@ h_min = 0.001
 h_max = 0.02
 prog = DirectCollocation(diagram, context, T, h_min, h_max)
 
-state_init = np.array([-1.0, 0.0 , 0.0, 0.0, 0.0, 0.0, 1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
-state_final = np.array([1.0, 0.0 , 0.0, 0.0, 0.0, 0.0, -1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
+state_init = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+state_final = np.array([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
 # state_init = np.array([-1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
 # state_final = np.array([1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
 
@@ -94,7 +94,7 @@ state_final = np.array([1.0, 0.0 , 0.0, 0.0, 0.0, 0.0, -1.0, 0.0 , 0.0, 0.0, 0.0
 prog.AddLinearConstraint(eq(prog.initial_state(), state_init))
 
 # Final conditions
-prog.AddLinearConstraint(eq(prog.final_state(), state_final))
+prog.AddLinearConstraint(eq(prog.final_state()[0:6], state_final[0:6]))
 
 # Input constraints
 for i in range(n_quadrotors):
@@ -160,8 +160,8 @@ context.SetContinuousState(state_init)
 simulator.Initialize()
 
 # Plot
-q_opt = np.zeros((100,6*n_quadrotors))
-q_actual = np.zeros((100,6*n_quadrotors))
+q_opt = np.zeros((100,6*n_quadrotors+4*n_balls))
+q_actual = np.zeros((100,6*n_quadrotors+4*n_balls))
 for i in range(100):
     t = t_arr[i]
     simulator.AdvanceTo(t_arr[i])
@@ -171,13 +171,25 @@ for i in range(100):
 for i in range(n_quadrotors):
     ind_i = 6*i
     ind_f = ind_i + 3
-    plt.figure()
+    plt.figure(figsize=(6, 3))
     plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+    plt.figure(figsize=(6, 3))
     plt.plot(t_arr, q_actual[:,ind_i:ind_f])
-    plt.figure()
+    plt.figure(figsize=(6, 3))
+    plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
+
+for i in range(n_balls):
+    ind_i = 6*n_quadrotors + 4*i
+    ind_f = ind_i + 2
+    plt.figure(figsize=(6, 3))
+    plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+    plt.figure(figsize=(6, 3))
+    plt.plot(t_arr, q_actual[:,ind_i:ind_f])
+    plt.figure(figsize=(6, 3))
     plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
 
 if n_quadrotors >= 2:
     plt.figure()
+    plt.figure(figsize=(6, 3))
     plt.plot(t_arr, np.linalg.norm(q_actual[:,0:2] - q_actual[:,6:8], axis=1))
 plt.show()
