@@ -13,6 +13,7 @@ from pydrake.autodiffutils import autoDiffToValueMatrix
 from quadrotor2d import Quadrotor2D
 from ball2d import Ball2D
 from visualization import Visualizer
+from matrix_multiplier import MatrixMultiplier
 
 n_quadrotors = 2
 n_balls = 0
@@ -31,7 +32,7 @@ def QuadrotorLQR(plant):
 
     return LinearQuadraticRegulator(plant, context, Q, R)
 
-def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, trajectory_x=None, LQR_tracker = False):
+def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, trajectory_x=None, trajectory_K = None):
     builder = DiagramBuilder()
     # Setup quadrotor plants and controllers
     quadrotor_plants = []
@@ -71,18 +72,22 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, t
     # Setup visualization
     if use_visualizer:
         visualizer = builder.AddSystem(Visualizer(n_quadrotors=n_quadrotors, n_balls=n_balls))
+        visualizer.set_name('visualizer')
         for i in range(n_quadrotors):
             builder.Connect(quadrotor_plants[i].get_output_port(0), visualizer.get_input_port(i))
         for i in range(n_balls):
             builder.Connect(ball_plants[i].get_output_port(0), visualizer.get_input_port(n_quadrotors + i))
 
     # Setup trajectory source
-    demulti_u = builder.AddSystem(Demultiplexer(2*n_quadrotors, 2))
-    demulti_u.set_name('feedforward input')
 
-    if LQR_tracker:
+
+    if trajectory_x is not None and trajectory_u is not None and trajectory_K is not None:
+        demulti_u = builder.AddSystem(Demultiplexer(2*n_quadrotors, 2))
+        demulti_u.set_name('feedforward input')
         demulti_x = builder.AddSystem(Demultiplexer(6*n_quadrotors, 6))
         demulti_x.set_name('reference trajectory')
+        demulti_K = builder.AddSystem(Demultiplexer(12*n_quadrotors, 12))
+        demulti_K.set_name('time-varying K')
 
         for i in range(n_quadrotors):
             adder_ia = builder.AddSystem(Adder(2,2))
@@ -90,47 +95,51 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, t
 
             adder_ib = builder.AddSystem(Adder(2,6))
             adder_ib.set_name('quad_'+str(i)+' error')
-            gain_i = builder.AddSystem(Gain(-1,6))
-            gain_i.set_name('-1 gain_'+str(i))
+            gain_ia = builder.AddSystem(Gain(-1,6))
+            gain_ia.set_name('-1 gain_error'+str(i))
 
-            controller = QuadrotorLQR(plant)
-            controller.set_name('LQR quad_'+str(i))
-            builder.AddSystem(controller)
+            matrix_multiplier = builder.AddSystem(MatrixMultiplier((2,6),(6,1)))
+            matrix_multiplier.set_name('mat_mult_'+str(i))
+
+            gain_ib = builder.AddSystem(Gain(-1,2))
+            gain_ib.set_name('-1 gain_u'+str(i))
 
             builder.Connect(demulti_u.get_output_port(i), adder_ia.get_input_port(0))
-            builder.Connect(controller.get_output_port(0), adder_ia.get_input_port(1))
+            builder.Connect(gain_ib.get_output_port(0), adder_ia.get_input_port(1))
             builder.Connect(adder_ia.get_output_port(0), quadrotor_plants[i].get_input_port(0))
-            builder.Connect(demulti_x.get_output_port(i),gain_i.get_input_port(0))
-            builder.Connect(gain_i.get_output_port(0),adder_ib.get_input_port(0))
+            builder.Connect(demulti_x.get_output_port(i),gain_ia.get_input_port(0))
+            builder.Connect(gain_ia.get_output_port(0),adder_ib.get_input_port(0))
             builder.Connect(quadrotor_plants[i].get_output_port(0),adder_ib.get_input_port(1))
-            builder.Connect(adder_ib.get_output_port(0),controller.get_input_port(0))
+            builder.Connect(demulti_K.get_output_port(i),matrix_multiplier.get_input_port(0))
+            builder.Connect(adder_ib.get_output_port(0),matrix_multiplier.get_input_port(1))
+            builder.Connect(matrix_multiplier.get_output_port(0),gain_ib.get_input_port(0))
 
-        if trajectory_u is not None:
-            source_u = builder.AddSystem(TrajectorySource(trajectory_u))
-            source_x = builder.AddSystem(TrajectorySource(trajectory_x))
-            builder.Connect(source_u.get_output_port(0), demulti_u.get_input_port(0))
-            builder.Connect(source_x.get_output_port(0), demulti_x.get_input_port(0))
-        else:
-            builder.ExportInput(demulti_u.get_input_port(0))
-            builder.ExportInput(demulti_x.get_input_port(0))
+        source_u = builder.AddSystem(TrajectorySource(trajectory_u))
+        source_u.set_name('source feedforward input trajectory')
+        source_x = builder.AddSystem(TrajectorySource(trajectory_x))
+        source_x.set_name('source reference trajectory')
+        source_K = builder.AddSystem(TrajectorySource(trajectory_K))
+        source_K.set_name('source time-varying K')
+
+        builder.Connect(source_u.get_output_port(0), demulti_u.get_input_port(0))
+        builder.Connect(source_x.get_output_port(0), demulti_x.get_input_port(0))
+        builder.Connect(source_K.get_output_port(0), demulti_K.get_input_port(0))
 
     else:
+        demulti_u = builder.AddSystem(Demultiplexer(2*n_quadrotors, 2))
+        demulti_u.set_name('quadrotor input')
         for i in range(n_quadrotors):
             builder.Connect(demulti_u.get_output_port(i), quadrotor_plants[i].get_input_port(0))
 
-        if trajectory_u is not None:
-            source = builder.AddSystem(TrajectorySource(trajectory_u))
-            builder.Connect(source.get_output_port(0), demulti_u.get_input_port(0))
-        else:
-            builder.ExportInput(demulti_u.get_input_port(0))
+        builder.ExportInput(demulti_u.get_input_port(0))
         
     diagram = builder.Build()
     return diagram
 
-diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=False, LQR_tracker =False)
-plt.figure(figsize=(20, 10))
-plot_system_graphviz(diagram)
-plt.show()
+diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=False)
+# plt.figure(figsize=(20, 10))
+# plot_system_graphviz(diagram)
+# plt.show()
 ###
 # exit()
 context = diagram.CreateDefaultContext()
@@ -166,10 +175,10 @@ for i in range(n_quadrotors):
 
 ###############################################################################
 # Set up initial guesses
-plant = Quadrotor2D()
+quad_plant = Quadrotor2D()
 h_init = h_max
 x_initial = PiecewisePolynomial.FirstOrderHold([0, T * h_init], np.column_stack((state_init, state_final)))
-u_initial = PiecewisePolynomial.ZeroOrderHold([0, T * h_init], 0.5*plant.mass*plant.gravity*np.ones((2*n_quadrotors,2)))
+u_initial = PiecewisePolynomial.ZeroOrderHold([0, T * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
 prog.SetInitialTrajectory(u_initial, x_initial)
 
 solver = SnoptSolver()
@@ -188,32 +197,32 @@ x_opt_poly = prog.ReconstructStateTrajectory(result)
 
 #################################################################################
 # Create list of K matrices for time varying LQR
-quad = Quadrotor2D(n_quadrotors=0, n_balls=0)
-context = quad.CreateDefaultContext()
-times_K = np.linspace(0, x_opt_poly.end_time(), 100)
+context = quad_plant.CreateDefaultContext()
+breaks = np.linspace(0, x_opt_poly.end_time(), 100)
 
-Ks_trajectory = []
+K_samples = np.zeros((breaks.size, 12*n_quadrotors))
+
 for i in range(n_quadrotors):
-    K_list_i = []
-    for j in range(len(times_K)):
-        context.SetContinuousState(x_opt_poly.value(times_K[j])[6*i:6*(i+1)])
-        context.FixInputPort(0,u_opt_poly.value(times_K[j])[2*i:2*(i+1)])
-        linear_system = FirstOrderTaylorApproximation(quad,context)
+    for j in range(breaks.size):
+        context.SetContinuousState(x_opt_poly.value(breaks[j])[6*i:6*(i+1)])
+        context.FixInputPort(0,u_opt_poly.value(breaks[j])[2*i:2*(i+1)])
+        linear_system = FirstOrderTaylorApproximation(quad_plant,context)
         A = linear_system.A()
         B = linear_system.B()
         K, _, _ = control.lqr(A, B, Q, R)
-        K_list_i.append(K)
-    Ks_trajectory.append(K_list_i)
+        K_samples[j, 12*i:12*(i+1)] = K.reshape(-1)
+
+K_poly = PiecewisePolynomial.ZeroOrderHold(breaks, K_samples.T)
 
 ##################################################################################
 # Setup diagram for simulation
-diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=True, trajectory_u = u_opt_poly, trajectory_x=x_opt_poly, LQR_tracker = True)
+diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=True, trajectory_u = u_opt_poly, trajectory_x=x_opt_poly, trajectory_K = K_poly)
 
 ###################################################################################
 # Animate
-# plt.figure(figsize=(20, 10))
-# plot_system_graphviz(diagram)
-# plt.show()
+plt.figure(figsize=(20, 10))
+plot_system_graphviz(diagram)
+plt.show()
 # Set up a simulator to run this diagram
 simulator = Simulator(diagram)
 integrator = simulator.get_mutable_integrator()
