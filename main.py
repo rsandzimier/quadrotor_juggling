@@ -13,7 +13,7 @@ from pydrake.autodiffutils import autoDiffToValueMatrix
 from quadrotor2d import Quadrotor2D
 from ball2d import Ball2D
 from visualization import Visualizer
-from matrix_multiplier import MatrixMultiplier
+from ltv_controller import LTVController
 
 n_quadrotors = 2
 n_balls = 0
@@ -80,7 +80,6 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, t
 
     # Setup trajectory source
 
-
     if trajectory_x is not None and trajectory_u is not None and trajectory_K is not None:
         demulti_u = builder.AddSystem(Demultiplexer(2*n_quadrotors, 2))
         demulti_u.set_name('feedforward input')
@@ -90,29 +89,14 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, t
         demulti_K.set_name('time-varying K')
 
         for i in range(n_quadrotors):
-            adder_ia = builder.AddSystem(Adder(2,2))
-            adder_ia.set_name('sum control signals'+str(i))
+            ltv_lqr = builder.AddSystem(LTVController(6,2))
+            ltv_lqr.set_name('LTV LQR ' + str(i))
 
-            adder_ib = builder.AddSystem(Adder(2,6))
-            adder_ib.set_name('quad_'+str(i)+' error')
-            gain_ia = builder.AddSystem(Gain(-1,6))
-            gain_ia.set_name('-1 gain_error'+str(i))
-
-            matrix_multiplier = builder.AddSystem(MatrixMultiplier((2,6),(6,1)))
-            matrix_multiplier.set_name('mat_mult_'+str(i))
-
-            gain_ib = builder.AddSystem(Gain(-1,2))
-            gain_ib.set_name('-1 gain_u'+str(i))
-
-            builder.Connect(demulti_u.get_output_port(i), adder_ia.get_input_port(0))
-            builder.Connect(gain_ib.get_output_port(0), adder_ia.get_input_port(1))
-            builder.Connect(adder_ia.get_output_port(0), quadrotor_plants[i].get_input_port(0))
-            builder.Connect(demulti_x.get_output_port(i),gain_ia.get_input_port(0))
-            builder.Connect(gain_ia.get_output_port(0),adder_ib.get_input_port(0))
-            builder.Connect(quadrotor_plants[i].get_output_port(0),adder_ib.get_input_port(1))
-            builder.Connect(demulti_K.get_output_port(i),matrix_multiplier.get_input_port(0))
-            builder.Connect(adder_ib.get_output_port(0),matrix_multiplier.get_input_port(1))
-            builder.Connect(matrix_multiplier.get_output_port(0),gain_ib.get_input_port(0))
+            builder.Connect(demulti_x.get_output_port(i), ltv_lqr.get_input_port(0))
+            builder.Connect(quadrotor_plants[i].get_output_port(0), ltv_lqr.get_input_port(1))
+            builder.Connect(demulti_u.get_output_port(i), ltv_lqr.get_input_port(2))
+            builder.Connect(demulti_K.get_output_port(i), ltv_lqr.get_input_port(3))
+            builder.Connect(ltv_lqr.get_output_port(0), quadrotor_plants[i].get_input_port(0))
 
         source_u = builder.AddSystem(TrajectorySource(trajectory_u))
         source_u.set_name('source feedforward input trajectory')
@@ -220,9 +204,9 @@ diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=True, trajectory_u =
 
 ###################################################################################
 # Animate
-plt.figure(figsize=(20, 10))
-plot_system_graphviz(diagram)
-plt.show()
+# plt.figure(figsize=(20, 10))
+# plot_system_graphviz(diagram)
+# plt.show()
 # Set up a simulator to run this diagram
 simulator = Simulator(diagram)
 integrator = simulator.get_mutable_integrator()
