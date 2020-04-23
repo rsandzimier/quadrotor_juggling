@@ -102,11 +102,15 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, t
         source_u.set_name('source feedforward input trajectory')
         source_x = builder.AddSystem(TrajectorySource(trajectory_x))
         source_x.set_name('source reference trajectory')
+        demulti_source_x = builder.AddSystem(Demultiplexer([6*n_quadrotors, 4*n_balls]))
+        demulti_source_x.set_name('quad and ball trajectories')
+
         source_K = builder.AddSystem(TrajectorySource(trajectory_K))
         source_K.set_name('source time-varying K')
 
         builder.Connect(source_u.get_output_port(0), demulti_u.get_input_port(0))
-        builder.Connect(source_x.get_output_port(0), demulti_x.get_input_port(0))
+        builder.Connect(source_x.get_output_port(0), demulti_source_x.get_input_port(0))
+        builder.Connect(demulti_source_x.get_output_port(0), demulti_x.get_input_port(0))
         builder.Connect(source_K.get_output_port(0), demulti_K.get_input_port(0))
 
     else:
@@ -132,8 +136,8 @@ h_min = 0.005
 h_max = 0.02
 prog = DirectCollocation(diagram, context, T, h_min, h_max)
 
-state_init = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
-state_final = np.array([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+state_init = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 1.0, 0.0, 0.0])
+state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.2, 1.0, 0.0, 0.0])
 # state_init = np.array([-1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
 # state_final = np.array([1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
 
@@ -145,10 +149,15 @@ prog.AddLinearConstraint(eq(prog.final_state()[0:6], state_final[0:6]))
 
 # Input constraints
 for i in range(n_quadrotors):
-    prog.AddConstraintToAllKnotPoints(prog.input()[2*i]>=0.0)
-    prog.AddConstraintToAllKnotPoints(prog.input()[2*i]<=10.0)
-    prog.AddConstraintToAllKnotPoints(prog.input()[2*i+1]>=0.0)
-    prog.AddConstraintToAllKnotPoints(prog.input()[2*i+1]<=10.0)
+    prog.AddConstraintToAllKnotPoints(prog.input()[2*i]>=-50.0)
+    prog.AddConstraintToAllKnotPoints(prog.input()[2*i]<=50.0)
+    prog.AddConstraintToAllKnotPoints(prog.input()[2*i+1]>=-50.0)
+    prog.AddConstraintToAllKnotPoints(prog.input()[2*i+1]<=50.0)
+
+# Don't allow quadrotor to pitch more than 60 degrees
+# for i in range(n_quadrotors):
+#     prog.AddConstraintToAllKnotPoints(prog.state()[6*i+2]>=-np.pi/2)
+#     prog.AddConstraintToAllKnotPoints(prog.state()[6*i+2]<=np.pi/2)
 
 # Don't allow quadrotor collisions
 for i in range(n_quadrotors):
@@ -187,13 +196,19 @@ breaks = np.linspace(0, x_opt_poly.end_time(), 100)
 K_samples = np.zeros((breaks.size, 12*n_quadrotors))
 
 for i in range(n_quadrotors):
+    K = None
     for j in range(breaks.size):
         context.SetContinuousState(x_opt_poly.value(breaks[j])[6*i:6*(i+1)])
         context.FixInputPort(0,u_opt_poly.value(breaks[j])[2*i:2*(i+1)])
         linear_system = FirstOrderTaylorApproximation(quad_plant,context)
         A = linear_system.A()
         B = linear_system.B()
-        K, _, _ = control.lqr(A, B, Q, R)
+        try:
+            K, _, _ = control.lqr(A, B, Q, R)
+        except:
+            assert K is not None, "Failed to calculate initial K for quadrotor " + str(i)
+            print ("Warning: Failed to calculate K at timestep", j, "for quadrotor", i, ". Using K from previous timestep")
+
         K_samples[j, 12*i:12*(i+1)] = K.reshape(-1)
 
 K_poly = PiecewisePolynomial.ZeroOrderHold(breaks, K_samples.T)
