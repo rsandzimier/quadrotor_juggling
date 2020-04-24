@@ -65,7 +65,6 @@ def Quadrotor2D_(T):
             u = self.EvalVectorInput(context, 0).CopyToVector()
             q = x[:3]
             qdot = x[3:]
-
             qddot = np.array([
                 -np.sin(q[2]) / self.mass * (u[0] + u[1]) ,
                 np.cos(x[2]) / self.mass * (u[0] + u[1]) - self.gravity,

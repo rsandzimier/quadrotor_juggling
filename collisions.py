@@ -1,4 +1,5 @@
 import numpy as np
+from pydrake.symbolic import Variable, cos, sin
 
 # TO DO: Allow for variable radius/mass balls
 r_ball = 0.1
@@ -91,13 +92,18 @@ def CalcPostCollisionStateQuadBallAux(x_quad, x_ball, return_quad_state):
         return x_ball
 
 def CalcClosestLocationQuadBall(q_quad, q_ball):
-    R_i = np.array([[np.cos(q_quad[2]) , -np.sin(q_quad[2])],
+    if not isinstance(q_quad[2], Variable):
+        R_i = np.array([[np.cos(q_quad[2]) , -np.sin(q_quad[2])],
                     [np.sin(q_quad[2]) ,  np.cos(q_quad[2])]])
-    R_inv_i = R_i.T
+    else:
+        R_i = np.array([[cos(q_quad[2]) , -sin(q_quad[2])],
+            [sin(q_quad[2]) ,  cos(q_quad[2])]])
 
+    R_inv_i = R_i.T
+# 
     q_dash = R_inv_i.dot(q_ball - q_quad[:2])
 
-    p_closest = np.clip(q_dash, [-w_quad, -h_quad], [w_quad, h_quad])
+    p_closest = np.clip(q_dash, [-w_quad, -h_quad], [w_quad, h_quad])    
 
     # Handle case where q_ball is inside the quadrotor base
     if p_closest[0] > -w_quad and p_closest[0] < w_quad and p_closest[1] > -h_quad and p_closest[1] < h_quad:
@@ -110,3 +116,15 @@ def CalcClosestLocationQuadBall(q_quad, q_ball):
         else: # p_closest[0] > w_quad-h_quad
             p_closest[0] = w_quad
     return q_quad[:2] + R_i.dot(p_closest)
+
+def CalcPostCollisionStateQuadBallResidual(vars):
+    x_quad = vars[0:6]
+    x_ball =vars[6:10]
+    x_ref = vars[10:16]
+    return CalcPostCollisionStateQuadBallAux(x_quad, x_ball, True) - x_ref
+
+def CalcPostCollisionStateBallQuadResidual(vars):
+    x_quad = vars[0:6]
+    x_ball =vars[6:10]
+    x_ref = vars[10:14]
+    return CalcPostCollisionStateQuadBallAux(x_quad, x_ball, False) - x_ref
