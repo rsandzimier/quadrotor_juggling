@@ -136,8 +136,8 @@ h_min = 0.005
 h_max = 0.02
 prog = DirectCollocation(diagram, context, T, h_min, h_max)
 
-state_init = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 1.0, 0.0, 0.0])
-state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.2, 1.0, 0.0, 0.0])
+state_init = np.array([0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.2, 1.0, 0.0, 0.0])
+state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 # state_init = np.array([-1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
 # state_final = np.array([1.0, 0.0 , 0.0, 0.0, 0.0, 0.0])
 
@@ -155,9 +155,9 @@ for i in range(n_quadrotors):
     prog.AddConstraintToAllKnotPoints(prog.input()[2*i+1]<=50.0)
 
 # Don't allow quadrotor to pitch more than 60 degrees
-# for i in range(n_quadrotors):
-#     prog.AddConstraintToAllKnotPoints(prog.state()[6*i+2]>=-np.pi/2)
-#     prog.AddConstraintToAllKnotPoints(prog.state()[6*i+2]<=np.pi/2)
+for i in range(n_quadrotors):
+    prog.AddConstraintToAllKnotPoints(prog.state()[6*i+2]>=-np.pi/2)
+    prog.AddConstraintToAllKnotPoints(prog.state()[6*i+2]<=np.pi/2)
 
 # Don't allow quadrotor collisions
 for i in range(n_quadrotors):
@@ -227,6 +227,7 @@ simulator = Simulator(diagram)
 integrator = simulator.get_mutable_integrator()
 integrator.set_maximum_step_size(0.01) # Reduce the max step size so that we can always detect collisions
 context = simulator.get_mutable_context()
+context.SetAccuracy(1e-4)
 
 ##############################################3
 # # Simulate
@@ -244,34 +245,34 @@ simulator.Initialize()
 # Plot
 q_opt = np.zeros((100,6*n_quadrotors+4*n_balls))
 q_actual = np.zeros((100,6*n_quadrotors+4*n_balls))
-for i in range(100):
-    t = t_arr[i]
-    simulator.AdvanceTo(t_arr[i])
-    q_opt[i,:] = x_opt_poly.value(t).flatten()
-    q_actual[i,:] = context.get_continuous_state_vector().CopyToVector()
+# for i in range(100):
+#     t = t_arr[i]
+#     simulator.AdvanceTo(t_arr[i])
+#     q_opt[i,:] = x_opt_poly.value(t).flatten()
+#     q_actual[i,:] = context.get_continuous_state_vector().CopyToVector()
 
-for i in range(n_quadrotors):
-    ind_i = 6*i
-    ind_f = ind_i + 3
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_opt[:,ind_i:ind_f])
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_actual[:,ind_i:ind_f])
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
+# for i in range(n_quadrotors):
+#     ind_i = 6*i
+#     ind_f = ind_i + 3
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_actual[:,ind_i:ind_f])
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
 
-for i in range(n_balls):
-    ind_i = 6*n_quadrotors + 4*i
-    ind_f = ind_i + 2
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_opt[:,ind_i:ind_f])
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_actual[:,ind_i:ind_f])
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
+# for i in range(n_balls):
+#     ind_i = 6*n_quadrotors + 4*i
+#     ind_f = ind_i + 2
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_actual[:,ind_i:ind_f])
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
 
-if n_quadrotors >= 2:
-    plt.figure()
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, np.linalg.norm(q_actual[:,0:2] - q_actual[:,6:8], axis=1))
-plt.show()
+# if n_quadrotors >= 2:
+#     plt.figure()
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, np.linalg.norm(q_actual[:,0:2] - q_actual[:,6:8], axis=1))
+# plt.show()
