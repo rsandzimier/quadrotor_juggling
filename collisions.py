@@ -28,6 +28,8 @@ def CalcPostCollisionStateBallBall(x_ball, x_ball_other):
     q_par_unit = q_par / q_par_norm if q_par_norm > 0 else np.array([0,1]) 
     q_perp_unit = np.array([q_par_unit[1], -q_par_unit[0]])
 
+    dist = CalcClosestDistanceBallBall(x_ball[0:2], x_ball_other[0:2])
+
     v_par = np.dot(x_ball[2:4], q_par_unit)
     v_perp = np.dot(x_ball[2:4], q_perp_unit)
     v_par_other = np.dot(x_ball_other[2:4], q_par_unit)
@@ -37,6 +39,7 @@ def CalcPostCollisionStateBallBall(x_ball, x_ball_other):
 
     v_par_new = ((m - m_other)*v_par + 2*m_other*v_par_other)/(m + m_other)
 
+    x_ball[0:2] = x_ball[0:2] + dist*q_par_unit
     x_ball[2:4] = v_par_new*q_par_unit + v_perp*q_perp_unit
 
     return x_ball
@@ -58,6 +61,8 @@ def CalcPostCollisionStateQuadBallAux(x_quad, x_ball, return_quad_state):
     q_par_norm = np.linalg.norm(q_par)
     q_par_unit = q_par / q_par_norm if q_par_norm > 0 else np.array([0,1]) 
     q_perp_unit = np.array([q_par_unit[1], -q_par_unit[0]])
+
+    dist = CalcClosestDistanceQuadBall(x_quad[0:3], x_ball[0:2])
 
     # v1, v2, w, r1, r2 
     v_quad_par = np.dot(x_quad[3:5], q_par_unit)
@@ -84,10 +89,12 @@ def CalcPostCollisionStateQuadBallAux(x_quad, x_ball, return_quad_state):
     w_quad_new = w_quad + (m_quad*moment_arm_quad*v_quad_par_new + m_ball*moment_arm_ball*v_ball_par_new)/I_quad
 
     if return_quad_state:
+        x_quad[0:2] = x_quad[0:2] + dist*q_par_unit # Right now, only x,y position of quad update. In future, could look into updating theta too
         x_quad[3:5] = v_quad_par_new*q_par_unit + v_quad_perp*q_perp_unit
         x_quad[5] = w_quad_new
         return x_quad
     else: # return ball state
+        x_ball[0:2] = x_ball[0:2] - dist*q_par_unit
         x_ball[2:4] = v_ball_par_new*q_par_unit + v_ball_perp*q_perp_unit
         return x_ball
 
