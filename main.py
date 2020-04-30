@@ -33,6 +33,46 @@ def QuadrotorLQR(plant):
 
     return LinearQuadraticRegulator(plant, context, Q, R)
 
+def getPosIndices():
+    # Return state indices corresponding to positions of balls and quads
+    indices = []
+    for i in range(n_quadrotors):
+        base_ind = 6*i
+        indices.extend([base_ind, base_ind+1, base_ind+2])
+    for i in range(n_balls):
+        base_ind = 6*n_quadrotors + 4*i
+        indices.extend([base_ind, base_ind+1])
+    return indices
+
+def getVelIndices():
+    # Return state indices corresponding to velocities of balls and quads
+    indices = []
+    for i in range(n_quadrotors):
+        base_ind = 6*i + 3
+        indices.extend([base_ind, base_ind+1, base_ind+2])
+    for i in range(n_balls):
+        base_ind = 6*n_quadrotors + 4*i + 2
+        indices.extend([base_ind, base_ind+1])
+    return indices
+
+def collatePosAndVel(q, qd):
+    # Collate positions of quads and balls and velocities of quads and balls into a single state representation
+    # Ordered as [q0, qd0, q1, qd1, q2, qd2, ...] where all quads appear first followed by all balls
+    # TO DO: Right now, assumes that q and qd are 2-dimensional array. If needed, should expand to 1-d case
+    assert q.shape == qd.shape, 'Error: dimension mismatch'
+    x = np.zeros((q.shape[0], 2*q.shape[1]))
+    for i in range(n_quadrotors):
+        base_ind_q = 3*i
+        base_ind_x = 6*i
+        x[:, base_ind_x:base_ind_x+3] = q[:,base_ind_q:base_ind_q+3]
+        x[:, base_ind_x+3:base_ind_x+6] = qd[:,base_ind_q:base_ind_q+3]
+    for i in range(n_balls):
+        base_ind_q = 3*n_quadrotors + 2*i
+        base_ind_x = 6*n_quadrotors + 4*i
+        x[:, base_ind_x:base_ind_x+2] = q[:,base_ind_q:base_ind_q+2]
+        x[:, base_ind_x+2:base_ind_x+4] = qd[:,base_ind_q:base_ind_q+2]
+    return x
+
 def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, trajectory_x=None, trajectory_K = None):
     builder = DiagramBuilder()
     # Setup quadrotor plants and controllers
@@ -132,7 +172,7 @@ diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=False)
 ###
 # exit()
 context = diagram.CreateDefaultContext()
-T = 200 #Number of breakpoints
+T = 300 #Number of breakpoints
 t_impact = 100 # time step where impact occurs
 h_min = 0.005/2
 h_max = 0.02/2
@@ -150,32 +190,42 @@ dir_coll_constr = DirectCollocationConstraint(diagram, context)
 for t in range(T):
     if t == t_impact: # Don't add Direct collocation constraint at impact
         continue 
-    AddDirectCollocationConstraint(dir_coll_constr, np.array([[h[t]]]), x[t,:].reshape(-1,1), x[t+1,:].reshape(-1,1), u[t,:].reshape(-1,1), u[t+1,:].reshape(-1,1), prog)
+    elif t == t_impact - 1 or t == t_impact + 1:
+        for i in range(n_quadrotors):
+            ind = 6*i
+            prog.AddConstraint(eq(x[t+1, ind:ind+3], x[t, ind:ind+3] + h[t] * x[t+1, ind+3:ind+6])) # Backward euler
+            prog.AddConstraint(eq(x[t+1, ind+3:ind+6], x[t, ind+3:ind+6])) # Zero-acceleration assumption during this time step. Should maybe replace with something less naive
+        for i in range(n_balls):
+            ind = 6*n_quadrotors+4*i
+            prog.AddConstraint(eq(x[t+1, ind:ind+2], x[t, ind:ind+2] + h[t] * x[t+1, ind+2:ind+4])) # Backward euler
+            prog.AddConstraint(eq(x[t+1, ind+2:ind+4], x[t, ind+2:ind+4] + h[t] * np.array([0,-9.81])))
+    else:
+        AddDirectCollocationConstraint(dir_coll_constr, np.array([[h[t]]]), x[t,:].reshape(-1,1), x[t+1,:].reshape(-1,1), u[t,:].reshape(-1,1), u[t+1,:].reshape(-1,1), prog)
 
-state_init = np.array([0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
-state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0])
+state_init = np.array([0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 0.0, 0.0])
+state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
 
 # Initial conditions
 prog.AddLinearConstraint(eq(x[0,:], state_init))
 
 # Final conditions
-# prog.AddLinearConstraint(eq(x[T,0:6], state_final[0:6]))
+prog.AddLinearConstraint(eq(x[T,0:6], state_final[0:6]))
+prog.AddLinearConstraint(eq(x[T,6:8], state_final[6:8]))
+
 # prog.AddLinearConstraint(eq(q[T,6:8], state_final[6:8]))
 
 # Input constraints
 for i in range(n_quadrotors):
-    prog.AddLinearConstraint(ge(u[:,2*i],-50.0))
-    prog.AddLinearConstraint(le(u[:,2*i], 50.0))
-    prog.AddLinearConstraint(ge(u[:,2*i+1],-50.0))
-    prog.AddLinearConstraint(le(u[:,2*i+1], 50.0))
+    prog.AddLinearConstraint(ge(u[:,2*i],-20.0))
+    prog.AddLinearConstraint(le(u[:,2*i], 20.0))
+    prog.AddLinearConstraint(ge(u[:,2*i+1],-20.0))
+    prog.AddLinearConstraint(le(u[:,2*i+1], 20.0))
 
 # Don't allow quadrotor to pitch more than 60 degrees
 for i in range(n_quadrotors):
     prog.AddLinearConstraint(ge(x[:,6*i+2],-np.pi/3))
     prog.AddLinearConstraint(le(x[:,6*i+2],np.pi/3))
 
-# NOTE: If I comment out all of these impact constraints, the simulation runs smoothly. But with them, the simulation 
-# freezes (at least on my computer.) The optimization solves fine, but the simulation doesn't work
 # Impact constraint
 quad_temp = Quadrotor2D()
 for t in range(T):
@@ -187,8 +237,9 @@ for t in range(T):
         prog.AddConstraint(CalcPostCollisionStateBallQuadResidual, lb=np.zeros((4,1)), ub=np.zeros((4,1)), vars=np.concatenate((x[t,:], x[t+1, 6:10])).reshape(-1,1))
     else:
         # Everywhere else, witness function must be > 0
-        prog.AddConstraint(lambda a: np.array([CalcClosestDistanceQuadBall(a[0:3], a[6:8])]).reshape(1,1), lb=np.zeros((1,1)), ub=np.inf*np.ones((1,1)), vars=x[t,:].reshape(-1,1))
-
+        # NOTE: If I uncomment this constraint, SNOPT complains about a singular basis
+        # prog.AddConstraint(lambda a: np.array([CalcClosestDistanceQuadBall(a[0:3], a[6:8])]).reshape(1,1), lb=np.zeros((1,1)), ub=np.inf*np.ones((1,1)), vars=x[t,:].reshape(-1,1))
+        pass
 
 # Don't allow quadrotor collisions
 # for i in range(n_quadrotors):
@@ -196,41 +247,34 @@ for t in range(T):
 #         prog.AddConstraintToAllKnotPoints((prog.state()[6*i]-prog.state()[6*j])**2 +
 #                                         (prog.state()[6*i+1]-prog.state()[6*j+1])**2 >= 0.65**2)
 
-
 ###############################################################################
 # Set up initial guesses
+initial_guess = np.empty(prog.num_vars())
+
 quad_plant = Quadrotor2D()
 h_init = h_max
-x_initial = PiecewisePolynomial.FirstOrderHold([0, T * h_init], np.column_stack((state_init, state_final)))
-u_initial = PiecewisePolynomial.ZeroOrderHold([0, T * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
-# NOTE: Right now not giving the optimizer an initial guess. Should probably add that in
-# prog.SetInitialTrajectory(u_initial, x_initial)
+pos_indices = getPosIndices()
+q_init_poly = PiecewisePolynomial.FirstOrderHold([0, T * h_init], np.column_stack((state_init[pos_indices], state_final[pos_indices])))
+qd_init_poly = q_init_poly.derivative()
+u_init_poly = PiecewisePolynomial.ZeroOrderHold([0, T * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
 
-# initial_guess = np.empty(prog.num_vars())
 # # initial guess for the time step
-# h_guess = h_max
-# prog.SetDecisionVariableValueInVector(h, [h_guess] * T, initial_guess)
-# # linear interpolation of the configuration
-# q0_guess = np.array([0, -1.0, 0])
-# q_guess_poly = PiecewisePolynomial.FirstOrderHold(
-#     [0, T * h_guess],
-#     np.column_stack((q0_guess, - q0_guess))
-# )
-# qd_guess_poly = q_guess_poly.derivative()
-# qdd_guess_poly = q_guess_poly.derivative()
-# # set initial guess for configuration, velocity, and acceleration
-# q_guess = np.hstack([q_guess_poly.value(t * h_guess) for t in range(T + 1)]).T
-# qd_guess = np.hstack([qd_guess_poly.value(t * h_guess) for t in range(T + 1)]).T
-# qdd_guess = np.hstack([qdd_guess_poly.value(t * h_guess) for t in range(T)]).T
+prog.SetDecisionVariableValueInVector(h, [h_init] * T, initial_guess)
 
-# prog.SetDecisionVariableValueInVector(q, q_guess, initial_guess)
-# prog.SetDecisionVariableValueInVector(qd, qd_guess, initial_guess)
-# prog.SetDecisionVariableValueInVector(qdd, qdd_guess, initial_guess)
+q_init = np.hstack([q_init_poly.value(t * h_init) for t in range(T + 1)]).T
+qd_init = np.hstack([qd_init_poly.value(t * h_init) for t in range(T + 1)]).T
 
+x_init = collatePosAndVel(q_init, qd_init)
+x_init[0,:] = state_init
+
+prog.SetDecisionVariableValueInVector(x, x_init, initial_guess)
+u_init = np.hstack([u_init_poly.value(t * h_init) for t in range(T + 1)]).T
+prog.SetDecisionVariableValueInVector(u, u_init, initial_guess)
 
 solver = SnoptSolver()
 print("Solving...")
-result = solver.Solve(prog)
+result = solver.Solve(prog, initial_guess)
+
 # be sure that the solution is optimal
 assert result.is_success()
 
@@ -296,55 +340,65 @@ duration = x_opt_poly.end_time()
 # simulator.AdvanceTo(duration)
 
 t_arr = np.linspace(0,duration,100)
-# context.SetTime(0.)
-# context.SetContinuousState(state_init)
-# simulator.Initialize()
+context.SetTime(0.)
+context.SetContinuousState(state_init)
+simulator.Initialize()
 
 # Plot
 q_opt = np.zeros((100,6*n_quadrotors+4*n_balls))
 q_actual = np.zeros((100,6*n_quadrotors+4*n_balls))
 for i in range(100):
     t = t_arr[i]
-    # simulator.AdvanceTo(t_arr[i])
+    simulator.AdvanceTo(t_arr[i])
     q_opt[i,:] = x_opt_poly.value(t).flatten()
-    # q_actual[i,:] = context.get_continuous_state_vector().CopyToVector()
+    q_actual[i,:] = context.get_continuous_state_vector().CopyToVector()
 
-for i in range(n_quadrotors):
-    ind_i = 6*i
-    ind_f = ind_i + 3
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_opt[:,ind_i:ind_f])
-    ind_i = 6*i + 3
-    ind_f = ind_i + 3
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_opt[:,ind_i:ind_f])
-    # plt.figure(figsize=(6, 3))
-    # plt.plot(t_arr, q_actual[:,ind_i:ind_f])
-    # plt.figure(figsize=(6, 3))
-    # plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
+# for i in range(n_quadrotors):
+#     ind_i = 6*i
+#     ind_f = ind_i + 3
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_actual[:,ind_i:ind_f])
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
+#     ind_i = 6*i + 3
+#     ind_f = ind_i + 3
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+    
+#     ind = 6*i
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(q_opt[:,ind], q_opt[:,ind+1])
 
 for i in range(n_balls):
-    ind_i = 6*n_quadrotors + 4*i
-    ind_f = ind_i + 2
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_opt[:,ind_i:ind_f])
-    ind_i = 6*n_quadrotors + 4*i + 2
-    ind_f = ind_i + 2
-    plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+    # ind_i = 6*n_quadrotors + 4*i
+    # ind_f = ind_i + 2
+    # plt.figure(figsize=(6, 3))
+    # plt.plot(t_arr, q_opt[:,ind_i:ind_f])
     # plt.figure(figsize=(6, 3))
     # plt.plot(t_arr, q_actual[:,ind_i:ind_f])
     # plt.figure(figsize=(6, 3))
     # plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
+    # ind_i = 6*n_quadrotors + 4*i + 2
+    # ind_f = ind_i + 2
+    # plt.figure(figsize=(6, 3))
+    # plt.plot(t_arr, q_opt[:,ind_i:ind_f])
 
-dist = []
-for t in range(t_arr.size):
-    dist.append(CalcClosestDistanceQuadBall(q_opt[t, 0:3], q_opt[t, 6:8]))
-plt.figure(figsize=(6, 3))
-plt.plot(t_arr, dist)
-
-if n_quadrotors >= 2:
-    plt.figure()
+    ind = 6*n_quadrotors + 4*i
     plt.figure(figsize=(6, 3))
-    plt.plot(t_arr, np.linalg.norm(q_actual[:,0:2] - q_actual[:,6:8], axis=1))
+    plt.plot(q_opt[:,ind], q_opt[:,ind+1])
+    plt.figure(figsize=(6, 3))
+    plt.plot(q_actual[:,ind], q_actual[:,ind+1])
+
+# dist = []
+# for t in range(t_arr.size):
+#     dist.append(CalcClosestDistanceQuadBall(q_opt[t, 0:3], q_opt[t, 6:8]))
+# plt.figure(figsize=(6, 3))
+# plt.plot(t_arr, dist)
+
+# if n_quadrotors >= 2:
+#     plt.figure()
+#     plt.figure(figsize=(6, 3))
+#     plt.plot(t_arr, np.linalg.norm(q_actual[:,0:2] - q_actual[:,6:8], axis=1))
 plt.show()
