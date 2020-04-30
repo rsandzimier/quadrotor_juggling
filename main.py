@@ -172,8 +172,8 @@ diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=False)
 ###
 # exit()
 context = diagram.CreateDefaultContext()
-T = 300 #Number of breakpoints
-t_impact = 100 # time step where impact occurs
+T = 600 #Number of breakpoints
+t_impact = np.array([100,400])
 h_min = 0.005/2
 h_max = 0.02/2
 
@@ -188,9 +188,9 @@ prog.AddBoundingBoxConstraint([h_min] * T, [h_max] * T, h)
 dir_coll_constr = DirectCollocationConstraint(diagram, context)
 
 for t in range(T):
-    if t == t_impact: # Don't add Direct collocation constraint at impact
+    if np.any(t == t_impact): # Don't add Direct collocation constraint at impact
         continue 
-    elif t == t_impact - 1 or t == t_impact + 1:
+    elif np.any(t == t_impact - 1) or np.any(t == t_impact + 1):
         for i in range(n_quadrotors):
             ind = 6*i
             prog.AddConstraint(eq(x[t+1, ind:ind+3], x[t, ind:ind+3] + h[t] * x[t+1, ind+3:ind+6])) # Backward euler
@@ -203,7 +203,14 @@ for t in range(T):
         AddDirectCollocationConstraint(dir_coll_constr, np.array([[h[t]]]), x[t,:].reshape(-1,1), x[t+1,:].reshape(-1,1), u[t,:].reshape(-1,1), u[t+1,:].reshape(-1,1), prog)
 
 state_init = np.array([0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 0.0, 0.0])
-state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0])
+
+# Final error cost
+# Q_final_error = np.diag([1.0,1.0,0.0,0.0,0.0,0.0,1.0,1.0,0.0,0.0])
+# prog.AddQuadraticErrorCost(Q_final_error, state_final, x[-1,:])
+# # Add input cost
+# for t in range(T):
+#     prog.AddQuadraticCost(np.eye(2),np.array([0,0]),u[t,:])
 
 # Initial conditions
 prog.AddLinearConstraint(eq(x[0,:], state_init))
@@ -226,15 +233,29 @@ for i in range(n_quadrotors):
     prog.AddLinearConstraint(ge(x[:,6*i+2],-np.pi/3))
     prog.AddLinearConstraint(le(x[:,6*i+2],np.pi/3))
 
+# Ball position constraints
+for i in range(n_balls):
+    ind_i = 6*n_quadrotors + 4*i
+    prog.AddLinearConstraint(ge(x[:,ind_i],-2.0))
+    prog.AddLinearConstraint(le(x[:,ind_i], 2.0))
+    prog.AddLinearConstraint(ge(x[:,ind_i+1],-3.0))
+    prog.AddLinearConstraint(le(x[:,ind_i+1], 3.0))
+
+
 # Impact constraint
 quad_temp = Quadrotor2D()
 for t in range(T):
-    if t == t_impact:
+    if np.any(t == t_impact):
         # At impact, witness function == 0
         prog.AddConstraint(lambda a: np.array([CalcClosestDistanceQuadBall(a[0:3], a[6:8])]).reshape(1,1), lb=np.zeros((1,1)), ub=np.zeros((1,1)), vars=x[t,:].reshape(-1,1))
         # At impact, enforce discrete collision update for both ball and quadrotor
         prog.AddConstraint(CalcPostCollisionStateQuadBallResidual, lb=np.zeros((6,1)), ub=np.zeros((6,1)), vars=np.concatenate((x[t,:], x[t+1, 0:6])).reshape(-1,1))
         prog.AddConstraint(CalcPostCollisionStateBallQuadResidual, lb=np.zeros((4,1)), ub=np.zeros((4,1)), vars=np.concatenate((x[t,:], x[t+1, 6:10])).reshape(-1,1))
+    
+        # rough constraints to enforce hitting center-ish of paddle
+        prog.AddConstraint(x[t,0]-x[t,6] >= -0.01)
+        prog.AddConstraint(x[t,0]-x[t,6] <=  0.01)
+
     else:
         # Everywhere else, witness function must be > 0
         # NOTE: If I uncomment this constraint, SNOPT complains about a singular basis
@@ -353,21 +374,21 @@ for i in range(100):
     q_opt[i,:] = x_opt_poly.value(t).flatten()
     q_actual[i,:] = context.get_continuous_state_vector().CopyToVector()
 
-# for i in range(n_quadrotors):
-#     ind_i = 6*i
-#     ind_f = ind_i + 3
-#     plt.figure(figsize=(6, 3))
-#     plt.plot(t_arr, q_opt[:,ind_i:ind_f])
-#     plt.figure(figsize=(6, 3))
-#     plt.plot(t_arr, q_actual[:,ind_i:ind_f])
-#     plt.figure(figsize=(6, 3))
-#     plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
-#     ind_i = 6*i + 3
-#     ind_f = ind_i + 3
-#     plt.figure(figsize=(6, 3))
-#     plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+for i in range(n_quadrotors):
+    ind_i = 6*i
+    ind_f = ind_i + 3
+    plt.figure(figsize=(6, 3))
+    plt.plot(t_arr, q_opt[:,ind_i:ind_f])
+    # plt.figure(figsize=(6, 3))
+    plt.plot(t_arr, q_actual[:,ind_i:ind_f])
+    # plt.figure(figsize=(6, 3))
+    # plt.plot(t_arr, q_actual[:,ind_i:ind_f]-q_opt[:,ind_i:ind_f])
+    # ind_i = 6*i + 3
+    # ind_f = ind_i + 3
+    # plt.figure(figsize=(6, 3))
+    # plt.plot(t_arr, q_opt[:,ind_i:ind_f])
     
-#     ind = 6*i
+    ind = 6*i
 #     plt.figure(figsize=(6, 3))
 #     plt.plot(q_opt[:,ind], q_opt[:,ind+1])
 
@@ -388,7 +409,7 @@ for i in range(n_balls):
     ind = 6*n_quadrotors + 4*i
     plt.figure(figsize=(6, 3))
     plt.plot(q_opt[:,ind], q_opt[:,ind+1])
-    plt.figure(figsize=(6, 3))
+    # plt.figure(figsize=(6, 3))
     plt.plot(q_actual[:,ind], q_actual[:,ind+1])
 
 # dist = []

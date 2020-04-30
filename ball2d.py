@@ -53,7 +53,7 @@ def Ball2D_(T):
                 self.witness_functions.append(witness_function)
 
             self.radius = 0.1
-            self.mass = 0.1
+            self.mass = 0.05
             self.gravity = 9.81
             self.mu = 0.3
             
