@@ -293,7 +293,6 @@ for t in range(T):
     for i in range(n_quadrotors):
         for j in range(i+1, n_quadrotors):
             prog.AddConstraint((x[t,6*i]-x[t,6*j])**2 + (x[t,6*i+1]-x[t,6*j+1])**2 >= 0.2**2)
-                                        (prog.state()[6*i+1]-prog.state()[6*j+1])**2 >= 0.65**2
 
 
 # Don't allow quadrotor collisions
