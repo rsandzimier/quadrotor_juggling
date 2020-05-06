@@ -1,6 +1,7 @@
 import pydrake
 import matplotlib.pyplot as plt
 import numpy as np
+import copy
 import control 
 
 from pydrake.all import DiagramBuilder, LinearQuadraticRegulator, Simulator, plot_system_graphviz 
@@ -166,207 +167,281 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, t
 
     return diagram
 
+def solveOptimiztaion(state_init, t_impact, impact_combination, T, u_guess = None, x_guess = None):
+
+    prog = MathematicalProgram()
+    h = prog.NewContinuousVariables(T, name='h')
+    u = prog.NewContinuousVariables(rows=T+1, cols = 2*n_quadrotors, name = 'u')
+    x = prog.NewContinuousVariables(rows=T+1, cols= 6*n_quadrotors+4*n_balls, name='x')
+    dv = prog.decision_variables()
+
+    prog.AddBoundingBoxConstraint([h_min] * T, [h_max] * T, h)
+
+    for i in range(n_quadrotors):
+        sys = Quadrotor2D()
+        context = sys.CreateDefaultContext()
+        dir_coll_constr = DirectCollocationConstraint(sys, context)
+        ind_x = 6*i
+        ind_u = 2*i
+
+        for t in range(T):
+            impact_indices = impact_combination[np.argmax(np.abs(t - t_impact)<=1)]
+            quad_ind, ball_ind  = impact_indices[0], impact_indices[1]
+
+            if quad_ind == i and np.any(t == t_impact): # Don't add Direct collocation constraint at impact
+                continue
+            elif quad_ind == i and (np.any(t == t_impact - 1) or np.any(t == t_impact + 1)):
+                prog.AddConstraint(eq(x[t+1, ind_x:ind_x+3], x[t, ind_x:ind_x+3] + h[t] * x[t+1, ind_x+3:ind_x+6])) # Backward euler
+                prog.AddConstraint(eq(x[t+1, ind_x+3:ind_x+6], x[t, ind_x+3:ind_x+6])) # Zero-acceleration assumption during this time step. Should maybe replace with something less naive
+            else:
+                AddDirectCollocationConstraint(dir_coll_constr, np.array([[h[t]]]), x[t,ind_x:ind_x+6].reshape(-1,1), x[t+1,ind_x:ind_x+6].reshape(-1,1), u[t,ind_u:ind_u+2].reshape(-1,1), u[t+1,ind_u:ind_u+2].reshape(-1,1), prog)
+
+    for i in range(n_balls):
+        sys = Ball2D()
+        context = sys.CreateDefaultContext()
+        dir_coll_constr = DirectCollocationConstraint(sys, context)
+        ind_x = 6*n_quadrotors+4*i
+
+        for t in range(T):
+            impact_indices = impact_combination[np.argmax(np.abs(t - t_impact)<=1)]
+            quad_ind, ball_ind  = impact_indices[0], impact_indices[1]
+
+            if ball_ind == i and np.any(t == t_impact): # Don't add Direct collocation constraint at impact
+                continue
+            elif ball_ind == i and (np.any(t == t_impact - 1) or np.any(t == t_impact + 1)):
+                prog.AddConstraint(eq(x[t+1, ind_x:ind_x+2], x[t, ind_x:ind_x+2] + h[t] * x[t+1, ind_x+2:ind_x+4])) # Backward euler
+                prog.AddConstraint(eq(x[t+1, ind_x+2:ind_x+4], x[t, ind_x+2:ind_x+4] + h[t] * np.array([0,-9.81])))
+            else:
+                AddDirectCollocationConstraint(dir_coll_constr, np.array([[h[t]]]), x[t,ind_x:ind_x+4].reshape(-1,1), x[t+1,ind_x:ind_x+4].reshape(-1,1), u[t,0:0].reshape(-1,1), u[t+1,0:0].reshape(-1,1), prog)
+
+    # state_init = np.array([0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 0.0, 0.0])
+    # state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0])
+
+    # Initial conditions
+    prog.AddLinearConstraint(eq(x[0,:], state_init))
+
+    # Final conditions
+    prog.AddLinearConstraint(eq(x[T,0:6], state_final[0:6]))
+    prog.AddLinearConstraint(eq(x[T,6:12], state_final[6:12]))
+    prog.AddLinearConstraint(eq(x[T,12:14], state_final[12:14]))
+
+    # Input constraints
+    for i in range(n_quadrotors):
+        prog.AddLinearConstraint(ge(u[:,2*i],-20.0))
+        prog.AddLinearConstraint(le(u[:,2*i], 20.0))
+        prog.AddLinearConstraint(ge(u[:,2*i+1],-20.0))
+        prog.AddLinearConstraint(le(u[:,2*i+1], 20.0))
+
+    # Don't allow quadrotor to pitch more than 60 degrees
+    for i in range(n_quadrotors):
+        prog.AddLinearConstraint(ge(x[:,6*i+2],-np.pi/3))
+        prog.AddLinearConstraint(le(x[:,6*i+2],np.pi/3))
+
+    # Ball position constraints
+    # for i in range(n_balls):
+    #     ind_i = 6*n_quadrotors + 4*i
+    #     prog.AddLinearConstraint(ge(x[:,ind_i],-2.0))
+    #     prog.AddLinearConstraint(le(x[:,ind_i], 2.0))
+    #     prog.AddLinearConstraint(ge(x[:,ind_i+1],-3.0))
+    #     prog.AddLinearConstraint(le(x[:,ind_i+1], 3.0))
+
+    # Impact constraint
+    quad_temp = Quadrotor2D()
+
+    for i in range(n_quadrotors):
+        for j in range(n_balls):
+            ind_q = 6*i
+            ind_b = 6*n_quadrotors + 4*j
+            for t in range(T):
+                if np.any(t == t_impact): # If quad i and ball j impact at time t, add impact constraint
+                    impact_indices = impact_combination[np.argmax(t == t_impact)]
+                    quad_ind, ball_ind  = impact_indices[0], impact_indices[1]
+                    if quad_ind == i and ball_ind == j:
+                        # At impact, witness function == 0
+                        prog.AddConstraint(lambda a: np.array([CalcClosestDistanceQuadBall(a[0:3], a[3:5])]).reshape(1,1), lb=np.zeros((1,1)), ub=np.zeros((1,1)), vars=np.concatenate((x[t,ind_q:ind_q+3], x[t,ind_b:ind_b+2])).reshape(-1,1))
+                        # At impact, enforce discrete collision update for both ball and quadrotor
+                        prog.AddConstraint(CalcPostCollisionStateQuadBallResidual, lb=np.zeros((6,1)), ub=np.zeros((6,1)), vars=np.concatenate((x[t,ind_q:ind_q+6], x[t,ind_b:ind_b+4], x[t+1, ind_q:ind_q+6])).reshape(-1,1))
+                        prog.AddConstraint(CalcPostCollisionStateBallQuadResidual, lb=np.zeros((4,1)), ub=np.zeros((4,1)), vars=np.concatenate((x[t,ind_q:ind_q+6], x[t,ind_b:ind_b+4], x[t+1, ind_b:ind_b+4])).reshape(-1,1))
+
+                        # rough constraints to enforce hitting center-ish of paddle
+                        prog.AddLinearConstraint(x[t,ind_q]-x[t,ind_b] >= -0.01)
+                        prog.AddLinearConstraint(x[t,ind_q]-x[t,ind_b] <=  0.01)
+                        continue
+                # Everywhere else, witness function must be > 0
+                prog.AddConstraint(lambda a: np.array([CalcClosestDistanceQuadBall(a[ind_q:ind_q+3], a[ind_b:ind_b+2])]).reshape(1,1), lb=np.zeros((1,1)), ub=np.inf*np.ones((1,1)), vars=x[t,:].reshape(-1,1))
+
+    # Don't allow quadrotor collisions
+    # for t in range(T):
+    #     for i in range(n_quadrotors):
+    #         for j in range(i+1, n_quadrotors):
+    #             prog.AddConstraint((x[t,6*i]-x[t,6*j])**2 + (x[t,6*i+1]-x[t,6*j+1])**2 >= 0.65**2)
+
+    # Quadrotors stay on their own side
+    # prog.AddLinearConstraint(ge(x[:, 0], 0.3))
+    # prog.AddLinearConstraint(le(x[:, 6], -0.3))
+
+    ###############################################################################
+    # Set up initial guesses
+    initial_guess = np.empty(prog.num_vars())
+
+    quad_plant = Quadrotor2D()
+    h_init = h_max
+    pos_indices = getPosIndices()
+    q_init_poly = PiecewisePolynomial.FirstOrderHold([0, T * h_init], np.column_stack((state_init[pos_indices], state_final[pos_indices])))
+    qd_init_poly = q_init_poly.derivative()
+    u_init_poly = PiecewisePolynomial.ZeroOrderHold([0, T * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
+
+    # # initial guess for the time step
+    prog.SetDecisionVariableValueInVector(h, [h_init] * T, initial_guess)
+
+    q_init = np.hstack([q_init_poly.value(t * h_init) for t in range(T + 1)]).T
+    qd_init = np.hstack([qd_init_poly.value(t * h_init) for t in range(T + 1)]).T
+
+    x_init = collatePosAndVel(q_init, qd_init)
+    x_init[0,:] = state_init
+
+    prog.SetDecisionVariableValueInVector(x, x_init, initial_guess)
+    u_init = np.hstack([u_init_poly.value(t * h_init) for t in range(T + 1)]).T
+    prog.SetDecisionVariableValueInVector(u, u_init, initial_guess)
+
+    solver = SnoptSolver()
+    print("Solving...")
+    result = solver.Solve(prog, initial_guess)
+
+    # print(GetInfeasibleConstraints(prog,result))
+    # be sure that the solution is optimal
+    assert result.is_success()
+
+    print(f'Solution found? {result.is_success()}.')
+
+    #################################################################################
+    # Extract results
+    # get optimal solution
+    h_opt = result.GetSolution(h)
+    x_opt = result.GetSolution(x)
+    u_opt = result.GetSolution(u)
+    time_breaks_opt = np.array([sum(h_opt[:t]) for t in range(T+1)])
+    u_opt_poly = PiecewisePolynomial.FirstOrderHold(time_breaks_opt, u_opt.T)
+    # x_opt_poly = PiecewisePolynomial.Cubic(time_breaks_opt, x_opt.T, False)
+    x_opt_poly = PiecewisePolynomial.FirstOrderHold(time_breaks_opt, x_opt.T) # Switch to first order hold instead of cubic because cubic was taking too long to create
+    #################################################################################
+    # Create list of K matrices for time varying LQR
+    context = quad_plant.CreateDefaultContext()
+    breaks = copy.copy(time_breaks_opt)#np.linspace(0, x_opt_poly.end_time(), 100)
+
+    K_samples = np.zeros((breaks.size, 12*n_quadrotors))
+
+    for i in range(n_quadrotors):
+        K = None
+        for j in range(breaks.size):
+            context.SetContinuousState(x_opt_poly.value(breaks[j])[6*i:6*(i+1)])
+            context.FixInputPort(0,u_opt_poly.value(breaks[j])[2*i:2*(i+1)])
+            linear_system = FirstOrderTaylorApproximation(quad_plant,context)
+            A = linear_system.A()
+            B = linear_system.B()
+            try:
+                K, _, _ = control.lqr(A, B, Q, R)
+            except:
+                assert K is not None, "Failed to calculate initial K for quadrotor " + str(i)
+                print ("Warning: Failed to calculate K at timestep", j, "for quadrotor", i, ". Using K from previous timestep")
+
+            K_samples[j, 12*i:12*(i+1)] = K.reshape(-1)
+
+    K_poly = PiecewisePolynomial.ZeroOrderHold(breaks, K_samples.T)
+
+    return u_opt_poly, x_opt_poly, K_poly
+
+def simulateUntil(t, state_init, u_opt_poly, x_opt_poly, K_poly):
+    ##################################################################################
+    # Setup diagram for simulation
+    diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=True, trajectory_u = u_opt_poly, trajectory_x=x_opt_poly, trajectory_K = K_poly)
+    simulator = Simulator(diagram)
+    integrator = simulator.get_mutable_integrator()
+    integrator.set_maximum_step_size(0.01) # Reduce the max step size so that we can always detect collisions
+    context = simulator.get_mutable_context()
+    context.SetAccuracy(1e-4)
+    context.SetTime(0.)
+    context.SetContinuousState(state_init)
+    simulator.Initialize()
+    simulator.AdvanceTo(t)
+
+    return context.get_continuous_state_vector().CopyToVector()
+
 diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=False)
 # plt.figure(figsize=(20, 10))
 # plot_system_graphviz(diagram)
 # plt.show()
 ###
-# exit()
+
 context = diagram.CreateDefaultContext()
-T = 300 #Number of breakpoints
-t_impact = np.array([100,200])
+T_total = 300 #Number of breakpoints
+t_impacts = np.array([100,200])
 impact_combination = np.array([[0,0],[1,0]]) #[quad,ball]
 
 h_min = 0.005/2
 h_max = 0.02/2
 
-prog = MathematicalProgram()
-h = prog.NewContinuousVariables(T, name='h')
-u = prog.NewContinuousVariables(rows=T+1, cols = 2*n_quadrotors, name = 'u')
-x = prog.NewContinuousVariables(rows=T+1, cols= 6*n_quadrotors+4*n_balls, name='x')
-dv = prog.decision_variables()
-
-prog.AddBoundingBoxConstraint([h_min] * T, [h_max] * T, h)
-
-for i in range(n_quadrotors):
-    sys = Quadrotor2D()
-    context = sys.CreateDefaultContext()
-    dir_coll_constr = DirectCollocationConstraint(sys, context)
-    ind_x = 6*i
-    ind_u = 2*i
-
-    for t in range(T):
-        impact_indices = impact_combination[np.argmax(np.abs(t - t_impact)<=1)]
-        quad_ind, ball_ind  = impact_indices[0], impact_indices[1]
-
-        if quad_ind == i and np.any(t == t_impact): # Don't add Direct collocation constraint at impact
-            continue
-        elif quad_ind == i and (np.any(t == t_impact - 1) or np.any(t == t_impact + 1)):
-            prog.AddConstraint(eq(x[t+1, ind_x:ind_x+3], x[t, ind_x:ind_x+3] + h[t] * x[t+1, ind_x+3:ind_x+6])) # Backward euler
-            prog.AddConstraint(eq(x[t+1, ind_x+3:ind_x+6], x[t, ind_x+3:ind_x+6])) # Zero-acceleration assumption during this time step. Should maybe replace with something less naive
-        else:
-            AddDirectCollocationConstraint(dir_coll_constr, np.array([[h[t]]]), x[t,ind_x:ind_x+6].reshape(-1,1), x[t+1,ind_x:ind_x+6].reshape(-1,1), u[t,ind_u:ind_u+2].reshape(-1,1), u[t+1,ind_u:ind_u+2].reshape(-1,1), prog)
-
-for i in range(n_balls):
-    sys = Ball2D()
-    context = sys.CreateDefaultContext()
-    dir_coll_constr = DirectCollocationConstraint(sys, context)
-    ind_x = 6*n_quadrotors+4*i
-
-    for t in range(T):
-        impact_indices = impact_combination[np.argmax(np.abs(t - t_impact)<=1)]
-        quad_ind, ball_ind  = impact_indices[0], impact_indices[1]
-
-        if ball_ind == i and np.any(t == t_impact): # Don't add Direct collocation constraint at impact
-            continue
-        elif ball_ind == i and (np.any(t == t_impact - 1) or np.any(t == t_impact + 1)):
-            prog.AddConstraint(eq(x[t+1, ind_x:ind_x+2], x[t, ind_x:ind_x+2] + h[t] * x[t+1, ind_x+2:ind_x+4])) # Backward euler
-            prog.AddConstraint(eq(x[t+1, ind_x+2:ind_x+4], x[t, ind_x+2:ind_x+4] + h[t] * np.array([0,-9.81])))
-        else:
-            AddDirectCollocationConstraint(dir_coll_constr, np.array([[h[t]]]), x[t,ind_x:ind_x+4].reshape(-1,1), x[t+1,ind_x:ind_x+4].reshape(-1,1), u[t,0:0].reshape(-1,1), u[t+1,0:0].reshape(-1,1), prog)
-
-# state_init = np.array([0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 0.0, 0.0])
-# state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0])
-
-# Two quads and one ball
-state_init  = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  1.0, 1.0, 0.0, 0.0])
 state_final = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0])
+state_init  = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  1.0, 1.0, 0.0, 0.0])
 
-# Initial conditions
-prog.AddLinearConstraint(eq(x[0,:], state_init))
+for i in range(len(t_impacts)):
+    if i == 0:
+        # Two quads and one ball
+        t_init = 0
+        state_init_i = copy.copy(state_init)
+        t_impacts_i = np.concatenate((t_impacts,np.array([T_total])))
+        impact_combination_i = copy.copy(impact_combination)  
+        T_i = T_total
+    else:
+        t_init = (t_impacts_i[0] + t_impacts_i[1])//2
+        state_init_i = copy.copy(state_sim_i)
+        t_impacts_i = t_impacts_i[1:] - t_init
+        impact_combination_i =  impact_combination_i[1:,:] 
+        T_i = T_i - t_init
 
-# Final conditions
-prog.AddLinearConstraint(eq(x[T,0:6], state_final[0:6]))
-prog.AddLinearConstraint(eq(x[T,6:12], state_final[6:12]))
-prog.AddLinearConstraint(eq(x[T,12:14], state_final[12:14]))
+    # print('OPT state init',state_init_i)
+    # print('OPT t_impacts',t_impacts_i[:-1])
+    # print('OPT impact_combination',impact_combination_i)
+    # print('OPT T',T_i)
 
-# Input constraints
-for i in range(n_quadrotors):
-    prog.AddLinearConstraint(ge(u[:,2*i],-20.0))
-    prog.AddLinearConstraint(le(u[:,2*i], 20.0))
-    prog.AddLinearConstraint(ge(u[:,2*i+1],-20.0))
-    prog.AddLinearConstraint(le(u[:,2*i+1], 20.0))
+    u_opt_poly_i, x_opt_poly_i, K_poly_i = solveOptimiztaion(state_init = state_init_i,
+                                                             t_impact = t_impacts_i[:-1],
+                                                             impact_combination = impact_combination_i,
+                                                             T = T_i,
+                                                             u_guess = None,
+                                                             x_guess = None)
+    
+    t_opt_break = (t_impacts_i[0] + t_impacts_i[1])//2
+    t_sim = x_opt_poly_i.get_segment_times()[t_opt_break]
 
-# Don't allow quadrotor to pitch more than 60 degrees
-for i in range(n_quadrotors):
-    prog.AddLinearConstraint(ge(x[:,6*i+2],-np.pi/3))
-    prog.AddLinearConstraint(le(x[:,6*i+2],np.pi/3))
+    # print('SIM t_sim',t_sim)
+    state_sim_i = simulateUntil(t_sim, state_init_i, u_opt_poly_i, x_opt_poly_i, K_poly_i)
+    
+    # print('SIM state_sim',state_sim_i)
+    # print('###################################################')
 
-# Ball position constraints
-# for i in range(n_balls):
-#     ind_i = 6*n_quadrotors + 4*i
-#     prog.AddLinearConstraint(ge(x[:,ind_i],-2.0))
-#     prog.AddLinearConstraint(le(x[:,ind_i], 2.0))
-#     prog.AddLinearConstraint(ge(x[:,ind_i+1],-3.0))
-#     prog.AddLinearConstraint(le(x[:,ind_i+1], 3.0))
+    if i == 0:
+        u_opt_poly_all, x_opt_poly_all, K_poly_all = u_opt_poly_i.slice(0,t_opt_break), x_opt_poly_i.slice(0,t_opt_break), K_poly_i.slice(0,t_opt_break)
+    else:
+        if i == len(t_impacts)-1:
+            t_opt_break = T_i
 
-# Impact constraint
-quad_temp = Quadrotor2D()
-
-for i in range(n_quadrotors):
-    for j in range(n_balls):
-        ind_q = 6*i
-        ind_b = 6*n_quadrotors + 4*j
-        for t in range(T):
-            if np.any(t == t_impact): # If quad i and ball j impact at time t, add impact constraint
-                impact_indices = impact_combination[np.argmax(t == t_impact)]
-                quad_ind, ball_ind  = impact_indices[0], impact_indices[1]
-                if quad_ind == i and ball_ind == j:
-                    # At impact, witness function == 0
-                    prog.AddConstraint(lambda a: np.array([CalcClosestDistanceQuadBall(a[0:3], a[3:5])]).reshape(1,1), lb=np.zeros((1,1)), ub=np.zeros((1,1)), vars=np.concatenate((x[t,ind_q:ind_q+3], x[t,ind_b:ind_b+2])).reshape(-1,1))
-                    # At impact, enforce discrete collision update for both ball and quadrotor
-                    prog.AddConstraint(CalcPostCollisionStateQuadBallResidual, lb=np.zeros((6,1)), ub=np.zeros((6,1)), vars=np.concatenate((x[t,ind_q:ind_q+6], x[t,ind_b:ind_b+4], x[t+1, ind_q:ind_q+6])).reshape(-1,1))
-                    prog.AddConstraint(CalcPostCollisionStateBallQuadResidual, lb=np.zeros((4,1)), ub=np.zeros((4,1)), vars=np.concatenate((x[t,ind_q:ind_q+6], x[t,ind_b:ind_b+4], x[t+1, ind_b:ind_b+4])).reshape(-1,1))
-
-                    # rough constraints to enforce hitting center-ish of paddle
-                    prog.AddLinearConstraint(x[t,ind_q]-x[t,ind_b] >= -0.01)
-                    prog.AddLinearConstraint(x[t,ind_q]-x[t,ind_b] <=  0.01)
-                    continue
-            # Everywhere else, witness function must be > 0
-            prog.AddConstraint(lambda a: np.array([CalcClosestDistanceQuadBall(a[ind_q:ind_q+3], a[ind_b:ind_b+2])]).reshape(1,1), lb=np.zeros((1,1)), ub=np.inf*np.ones((1,1)), vars=x[t,:].reshape(-1,1))
-
-# Don't allow quadrotor collisions
-# for t in range(T):
-#     for i in range(n_quadrotors):
-#         for j in range(i+1, n_quadrotors):
-#             prog.AddConstraint((x[t,6*i]-x[t,6*j])**2 + (x[t,6*i+1]-x[t,6*j+1])**2 >= 0.65**2)
-
-# Quadrotors stay on their own side
-# prog.AddLinearConstraint(ge(x[:, 0], 0.3))
-# prog.AddLinearConstraint(le(x[:, 6], -0.3))
-
-###############################################################################
-# Set up initial guesses
-initial_guess = np.empty(prog.num_vars())
-
-quad_plant = Quadrotor2D()
-h_init = h_max
-pos_indices = getPosIndices()
-q_init_poly = PiecewisePolynomial.FirstOrderHold([0, T * h_init], np.column_stack((state_init[pos_indices], state_final[pos_indices])))
-qd_init_poly = q_init_poly.derivative()
-u_init_poly = PiecewisePolynomial.ZeroOrderHold([0, T * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
-
-# # initial guess for the time step
-prog.SetDecisionVariableValueInVector(h, [h_init] * T, initial_guess)
-
-q_init = np.hstack([q_init_poly.value(t * h_init) for t in range(T + 1)]).T
-qd_init = np.hstack([qd_init_poly.value(t * h_init) for t in range(T + 1)]).T
-
-x_init = collatePosAndVel(q_init, qd_init)
-x_init[0,:] = state_init
-
-prog.SetDecisionVariableValueInVector(x, x_init, initial_guess)
-u_init = np.hstack([u_init_poly.value(t * h_init) for t in range(T + 1)]).T
-prog.SetDecisionVariableValueInVector(u, u_init, initial_guess)
-
-solver = SnoptSolver()
-print("Solving...")
-result = solver.Solve(prog, initial_guess)
-
-print(GetInfeasibleConstraints(prog,result))
-# be sure that the solution is optimal
-assert result.is_success()
-
-print(f'Solution found? {result.is_success()}.')
-
-#################################################################################
-# Extract results
-# get optimal solution
-h_opt = result.GetSolution(h)
-x_opt = result.GetSolution(x)
-u_opt = result.GetSolution(u)
-time_breaks_opt = np.array([sum(h_opt[:t]) for t in range(T+1)])
-u_opt_poly = PiecewisePolynomial.FirstOrderHold(time_breaks_opt, u_opt.T)
-# x_opt_poly = PiecewisePolynomial.Cubic(time_breaks_opt, x_opt.T, False)
-x_opt_poly = PiecewisePolynomial.FirstOrderHold(time_breaks_opt, x_opt.T) # Switch to first order hold instead of cubic because cubic was taking too long to create
-#################################################################################
-# Create list of K matrices for time varying LQR
-context = quad_plant.CreateDefaultContext()
-breaks = np.linspace(0, x_opt_poly.end_time(), 100)
-
-K_samples = np.zeros((breaks.size, 12*n_quadrotors))
-
-for i in range(n_quadrotors):
-    K = None
-    for j in range(breaks.size):
-        context.SetContinuousState(x_opt_poly.value(breaks[j])[6*i:6*(i+1)])
-        context.FixInputPort(0,u_opt_poly.value(breaks[j])[2*i:2*(i+1)])
-        linear_system = FirstOrderTaylorApproximation(quad_plant,context)
-        A = linear_system.A()
-        B = linear_system.B()
-        try:
-            K, _, _ = control.lqr(A, B, Q, R)
-        except:
-            assert K is not None, "Failed to calculate initial K for quadrotor " + str(i)
-            print ("Warning: Failed to calculate K at timestep", j, "for quadrotor", i, ". Using K from previous timestep")
-
-        K_samples[j, 12*i:12*(i+1)] = K.reshape(-1)
-
-K_poly = PiecewisePolynomial.ZeroOrderHold(breaks, K_samples.T)
+        u_slice = u_opt_poly_i.slice(0,t_opt_break)
+        x_slice = x_opt_poly_i.slice(0,t_opt_break)
+        K_slice = K_poly_i.slice(0,t_opt_break)
+        u_slice.shiftRight(u_opt_poly_all.end_time())
+        x_slice.shiftRight(x_opt_poly_all.end_time())
+        K_slice.shiftRight(K_poly_all.end_time())
+        
+        u_opt_poly_all.ConcatenateInTime(u_slice)
+        x_opt_poly_all.ConcatenateInTime(x_slice)
+        K_poly_all.ConcatenateInTime(K_slice)
+    
+    print(x_opt_poly_all.get_number_of_segments())
 
 ##################################################################################
 # Setup diagram for simulation
-diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=True, trajectory_u = u_opt_poly, trajectory_x=x_opt_poly, trajectory_K = K_poly)
+diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=True, trajectory_u = u_opt_poly_all , trajectory_x = x_opt_poly_all , trajectory_K = K_poly_all )
 
 ###################################################################################
 # Animate
@@ -382,7 +457,7 @@ context.SetAccuracy(1e-4)
 
 ##############################################3
 # # Simulate
-duration = x_opt_poly.end_time()
+duration = x_opt_poly_all.end_time()
 # context.SetTime(0.)
 # context.SetContinuousState(state_init)
 # simulator.Initialize()
@@ -399,7 +474,7 @@ q_actual = np.zeros((100,6*n_quadrotors+4*n_balls))
 for i in range(100):
     t = t_arr[i]
     simulator.AdvanceTo(t_arr[i])
-    q_opt[i,:] = x_opt_poly.value(t).flatten()
+    q_opt[i,:] = x_opt_poly_all.value(t).flatten()
     q_actual[i,:] = context.get_continuous_state_vector().CopyToVector()
 
 for i in range(n_quadrotors):
