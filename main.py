@@ -167,7 +167,7 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, t
 
     return diagram
 
-def solveOptimiztaion(state_init, t_impact, impact_combination, T, u_guess = None, x_guess = None):
+def solveOptimization(state_init, t_impact, impact_combination, T, u_guess = None, x_guess = None, h_guess = None):
 
     prog = MathematicalProgram()
     h = prog.NewContinuousVariables(T, name='h')
@@ -214,16 +214,11 @@ def solveOptimiztaion(state_init, t_impact, impact_combination, T, u_guess = Non
             else:
                 AddDirectCollocationConstraint(dir_coll_constr, np.array([[h[t]]]), x[t,ind_x:ind_x+4].reshape(-1,1), x[t+1,ind_x:ind_x+4].reshape(-1,1), u[t,0:0].reshape(-1,1), u[t+1,0:0].reshape(-1,1), prog)
 
-    # state_init = np.array([0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 0.0, 0.0])
-    # state_final = np.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0])
-
     # Initial conditions
     prog.AddLinearConstraint(eq(x[0,:], state_init))
 
     # Final conditions
-    prog.AddLinearConstraint(eq(x[T,0:6], state_final[0:6]))
-    prog.AddLinearConstraint(eq(x[T,6:12], state_final[6:12]))
-    prog.AddLinearConstraint(eq(x[T,12:14], state_final[12:14]))
+    prog.AddLinearConstraint(eq(x[T,0:14], state_final[0:14]))
 
     # Input constraints
     for i in range(n_quadrotors):
@@ -284,25 +279,11 @@ def solveOptimiztaion(state_init, t_impact, impact_combination, T, u_guess = Non
     # Set up initial guesses
     initial_guess = np.empty(prog.num_vars())
 
-    quad_plant = Quadrotor2D()
-    h_init = h_max
-    pos_indices = getPosIndices()
-    q_init_poly = PiecewisePolynomial.FirstOrderHold([0, T * h_init], np.column_stack((state_init[pos_indices], state_final[pos_indices])))
-    qd_init_poly = q_init_poly.derivative()
-    u_init_poly = PiecewisePolynomial.ZeroOrderHold([0, T * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
-
     # # initial guess for the time step
-    prog.SetDecisionVariableValueInVector(h, [h_init] * T, initial_guess)
-
-    q_init = np.hstack([q_init_poly.value(t * h_init) for t in range(T + 1)]).T
-    qd_init = np.hstack([qd_init_poly.value(t * h_init) for t in range(T + 1)]).T
-
-    x_init = collatePosAndVel(q_init, qd_init)
+    prog.SetDecisionVariableValueInVector(h, h_guess * T, initial_guess)
     x_init[0,:] = state_init
-
-    prog.SetDecisionVariableValueInVector(x, x_init, initial_guess)
-    u_init = np.hstack([u_init_poly.value(t * h_init) for t in range(T + 1)]).T
-    prog.SetDecisionVariableValueInVector(u, u_init, initial_guess)
+    prog.SetDecisionVariableValueInVector(x, x_guess, initial_guess)
+    prog.SetDecisionVariableValueInVector(u, u_guess, initial_guess)
 
     solver = SnoptSolver()
     print("Solving...")
@@ -321,7 +302,7 @@ def solveOptimiztaion(state_init, t_impact, impact_combination, T, u_guess = Non
     x_opt = result.GetSolution(x)
     u_opt = result.GetSolution(u)
     time_breaks_opt = np.array([sum(h_opt[:t]) for t in range(T+1)])
-    u_opt_poly = PiecewisePolynomial.FirstOrderHold(time_breaks_opt, u_opt.T)
+    u_opt_poly = PiecewisePolynomial.ZeroOrderHold(time_breaks_opt, u_opt.T)
     # x_opt_poly = PiecewisePolynomial.Cubic(time_breaks_opt, x_opt.T, False)
     x_opt_poly = PiecewisePolynomial.FirstOrderHold(time_breaks_opt, x_opt.T) # Switch to first order hold instead of cubic because cubic was taking too long to create
     #################################################################################
@@ -349,7 +330,7 @@ def solveOptimiztaion(state_init, t_impact, impact_combination, T, u_guess = Non
 
     K_poly = PiecewisePolynomial.ZeroOrderHold(breaks, K_samples.T)
 
-    return u_opt_poly, x_opt_poly, K_poly
+    return u_opt_poly, x_opt_poly, K_poly, h_opt
 
 def simulateUntil(t, state_init, u_opt_poly, x_opt_poly, K_poly):
     ##################################################################################
@@ -381,8 +362,8 @@ impact_combination = np.array([[0,0],[1,0]]) #[quad,ball]
 h_min = 0.005/2
 h_max = 0.02/2
 
-state_final = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0])
-state_init  = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  1.0, 1.0, 0.0, 0.0])
+state_init  = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  1.5, 1.0, 0.0, 0.0])
+state_final = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  -1.5, 1.0, 0.0, 0.0])
 
 for i in range(len(t_impacts)):
     if i == 0:
@@ -392,28 +373,64 @@ for i in range(len(t_impacts)):
         t_impacts_i = np.concatenate((t_impacts,np.array([T_total])))
         impact_combination_i = copy.copy(impact_combination)  
         T_i = T_total
+
+        # Set up initial guesses
+        quad_plant = Quadrotor2D()
+        h_init = h_max
+        pos_indices = getPosIndices()
+        q_init_poly = PiecewisePolynomial.FirstOrderHold([0, T_i * h_init], np.column_stack((state_init[pos_indices], state_final[pos_indices])))
+        qd_init_poly = q_init_poly.derivative()
+        u_init_poly = PiecewisePolynomial.ZeroOrderHold([0, T_i * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
+        u_init = np.hstack([u_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
+
+        q_init = np.hstack([q_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
+        qd_init = np.hstack([qd_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
+
+        x_init = collatePosAndVel(q_init, qd_init)
+        x_init[0,:] = state_init_i
+        h_init = [h_init * T_i]
+
     else:
         t_init = (t_impacts_i[0] + t_impacts_i[1])//2
+        # Set up initial guesses based on previous solution
+        # h_init = h_opt[t_init:]
+        # x_init = np.hstack([x_opt_poly_i.value(t*h_opt[t-1]) for t in range(t_init, T_i+1)]).T
+        # u_init = np.hstack([u_opt_poly_i.value(t*h_opt[t-1]) for t in range(t_init, T_i+1)]).T
         state_init_i = copy.copy(state_sim_i)
         t_impacts_i = t_impacts_i[1:] - t_init
         impact_combination_i =  impact_combination_i[1:,:] 
         T_i = T_i - t_init
+
+        # Set up initial guesses based on ?
+        h_init = h_max
+        pos_indices = getPosIndices()
+        q_init_poly = PiecewisePolynomial.FirstOrderHold([0, T_i * h_init], np.column_stack((state_init[pos_indices], state_final[pos_indices])))
+        qd_init_poly = q_init_poly.derivative()
+        u_init_poly = PiecewisePolynomial.ZeroOrderHold([0, T_i * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
+        u_init = np.hstack([u_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
+
+        q_init = np.hstack([q_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
+        qd_init = np.hstack([qd_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
+
+        x_init = collatePosAndVel(q_init, qd_init)
+        x_init[0,:] = state_init_i
+        h_init = [h_init * T_i]
 
     # print('OPT state init',state_init_i)
     # print('OPT t_impacts',t_impacts_i[:-1])
     # print('OPT impact_combination',impact_combination_i)
     # print('OPT T',T_i)
 
-    u_opt_poly_i, x_opt_poly_i, K_poly_i = solveOptimiztaion(state_init = state_init_i,
+    u_opt_poly_i, x_opt_poly_i, K_poly_i, h_opt = solveOptimization(state_init = state_init_i,
                                                              t_impact = t_impacts_i[:-1],
                                                              impact_combination = impact_combination_i,
                                                              T = T_i,
-                                                             u_guess = None,
-                                                             x_guess = None)
+                                                             u_guess = u_init,
+                                                             x_guess = x_init,
+                                                             h_guess = h_init)
     
     t_opt_break = (t_impacts_i[0] + t_impacts_i[1])//2
     t_sim = x_opt_poly_i.get_segment_times()[t_opt_break]
-
     # print('SIM t_sim',t_sim)
     state_sim_i = simulateUntil(t_sim, state_init_i, u_opt_poly_i, x_opt_poly_i, K_poly_i)
     
@@ -437,7 +454,7 @@ for i in range(len(t_impacts)):
         x_opt_poly_all.ConcatenateInTime(x_slice)
         K_poly_all.ConcatenateInTime(K_slice)
     
-    print(x_opt_poly_all.get_number_of_segments())
+    # print(x_opt_poly_all.get_number_of_segments())
 
 ##################################################################################
 # Setup diagram for simulation
