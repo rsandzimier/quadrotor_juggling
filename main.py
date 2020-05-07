@@ -17,6 +17,8 @@ from visualization import Visualizer
 from ltv_controller import LTVController
 from collisions import CalcClosestDistanceQuadBall, CalcPostCollisionStateQuadBall, CalcPostCollisionStateBallQuad, CalcPostCollisionStateQuadBallResidual, CalcPostCollisionStateBallQuadResidual
 
+import matplotlib.animation as animation
+
 n_quadrotors = 2
 n_balls = 1
 
@@ -484,6 +486,10 @@ t_arr = np.linspace(0,duration,100)
 context.SetTime(0.)
 context.SetContinuousState(state_init)
 simulator.Initialize()
+simulator.set_target_realtime_rate(1.0)
+
+visualizer = diagram.GetSubsystemByName('visualizer')
+visualizer.start_recording()
 
 # Plot
 q_opt = np.zeros((100,6*n_quadrotors+4*n_balls))
@@ -493,6 +499,11 @@ for i in range(100):
     simulator.AdvanceTo(t_arr[i])
     q_opt[i,:] = x_opt_poly_all.value(t).flatten()
     q_actual[i,:] = context.get_continuous_state_vector().CopyToVector()
+
+ani = visualizer.get_recording_as_animation()
+Writer = animation.writers['ffmpeg']
+writer = Writer(fps=15, metadata=dict(artist='Me'), bitrate=1800)
+ani.save('animation.mp4', writer=writer)
 
 for i in range(n_quadrotors):
     ind_i = 6*i
