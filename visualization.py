@@ -22,8 +22,8 @@ class Visualizer(PyPlotVisualizer):
         for _ in range(self.n_balls):
             self.DeclareInputPort(PortDataType.kVectorValued, 4)
         self.ax.set_aspect("equal")
-        self.ax.set_xlim(-4, 4)
-        self.ax.set_ylim(-2, 2)
+        self.ax.set_xlim(-8, 8)
+        self.ax.set_ylim(-4, 4)
 
         # Initialize quadrotor visualization parameters
         self.length = .25  # moment arm (meters)
