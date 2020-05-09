@@ -20,7 +20,7 @@ from collisions import CalcClosestDistanceQuadBall, CalcPostCollisionStateQuadBa
 import matplotlib.animation as animation
 
 n_quadrotors = 2
-n_balls = 1
+n_balls = 2
 
 Q = np.diag([100000, 100000, 100000, 10000, 10000, 10000*(0.25 / 2. / np.pi)])
 R = np.array([[0.1, 0.05], [0.05, 0.1]])
@@ -220,6 +220,15 @@ def solveOptimization(state_init, t_impact, impact_combination, T, u_guess = Non
 
     # Final conditions
     prog.AddLinearConstraint(eq(x[T,0:14], state_final[0:14]))
+    # Quadrotor final conditions (full state)
+    for i in range(n_quadrotors):
+        ind = 6*i
+        prog.AddLinearConstraint(eq(x[T,ind:ind+6], state_final[ind:ind+6]))
+
+    # Ball final conditions (position only)
+    for i in range(n_balls):
+        ind = 6*n_quadrotors + 4*i
+        prog.AddLinearConstraint(eq(x[T,ind:ind+2], state_final[ind:ind+2]))
 
     # Input constraints
     for i in range(n_quadrotors):
@@ -282,8 +291,10 @@ def solveOptimization(state_init, t_impact, impact_combination, T, u_guess = Non
 
     # # initial guess for the time step
     prog.SetDecisionVariableValueInVector(h, h_guess, initial_guess)
+
     x_init[0,:] = state_init
     prog.SetDecisionVariableValueInVector(x, x_guess, initial_guess)
+
     prog.SetDecisionVariableValueInVector(u, u_guess, initial_guess)
 
     solver = SnoptSolver()
@@ -333,6 +344,24 @@ def solveOptimization(state_init, t_impact, impact_combination, T, u_guess = Non
 
     return u_opt_poly, x_opt_poly, K_poly, h_opt
 
+def getReoptimizationBreakPoint(t_impacts, impact_combination):
+    quad_collision_list = []
+
+    t_opt_break = None
+    for i in range(impact_combination.shape[0]):
+        if impact_combination[i, 0] not in quad_collision_list:
+            quad_collision_list.append(impact_combination[i, 0])
+        else:
+            t_opt_break = (t_impacts_i[i-1] + t_impacts_i[i])//2
+            i_increment = i
+            break
+
+    if t_opt_break is None:
+        t_opt_break = t_impacts_i[-1]
+        i_increment = impact_combination.shape[0]
+
+    return t_opt_break, i_increment
+
 def simulateUntil(t, state_init, u_opt_poly, x_opt_poly, K_poly):
     ##################################################################################
     # Setup diagram for simulation
@@ -357,16 +386,17 @@ diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=False)
 
 context = diagram.CreateDefaultContext()
 T_total = 500 #Number of breakpoints
-t_impacts = np.array([100,200, 300, 400])
-impact_combination = np.array([[0,0],[1,0],[0,0],[1,0]]) #[quad,ball]
+t_impacts = np.array([100, 105, 200, 205, 300, 305, 400, 405])
+impact_combination = np.array([[0,0],[1,1],[0,1],[1,0],[0,0],[1,1],[0,1],[1,0]]) #[quad,ball]
 
 h_min = 0.005/2
 h_max = 0.02/2
 
-state_init  = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  1.5, 1.0, 0.0, 0.0])
-state_final = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  -1.5, 1.0, 0.0, 0.0])
+state_init  = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  1.5, 1.0, 0.0, 0.0,   -1.5, 1.0, 0.0, 0.0])
+state_final = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  -1.5, 1.0, 0.0, 0.0,   1.5, 1.0, 0.0, 0.0])
 
-for i in range(len(t_impacts)):
+i = 0
+while i < len(t_impacts):
     if i == 0:
         # Two quads and one ball
         t_init = 0
@@ -392,14 +422,14 @@ for i in range(len(t_impacts)):
         h_init = [h_init]*T_i
 
     else:
-        t_init = (t_impacts_i[0] + t_impacts_i[1])//2
+        t_init = t_opt_break
         # Set up initial guesses based on previous solution
         # h_init = h_opt[t_init:]
         # x_init = np.hstack([x_opt_poly_i.value(t*h_opt[t-1]) for t in range(t_init, T_i+1)]).T
         # u_init = np.hstack([u_opt_poly_i.value(t*h_opt[t-1]) for t in range(t_init, T_i+1)]).T
         state_init_i = copy.copy(state_sim_i)
-        t_impacts_i = t_impacts_i[1:] - t_init
-        impact_combination_i =  impact_combination_i[1:,:] 
+        t_impacts_i = t_impacts_i[i_increment:] - t_init
+        impact_combination_i =  impact_combination_i[i_increment:,:] 
         T_i = T_i - t_init
 
         # Set up initial guesses based on ?
@@ -427,7 +457,6 @@ for i in range(len(t_impacts)):
     # print('OPT t_impacts',t_impacts_i[:-1])
     # print('OPT impact_combination',impact_combination_i)
     # print('OPT T',T_i)
-
     u_opt_poly_i, x_opt_poly_i, K_poly_i, h_opt = solveOptimization(state_init = state_init_i,
                                                              t_impact = t_impacts_i[:-1],
                                                              impact_combination = impact_combination_i,
@@ -435,8 +464,8 @@ for i in range(len(t_impacts)):
                                                              u_guess = u_init,
                                                              x_guess = x_init,
                                                              h_guess = h_init)
-    
-    t_opt_break = (t_impacts_i[0] + t_impacts_i[1])//2
+
+    t_opt_break, i_increment = getReoptimizationBreakPoint(t_impacts_i, impact_combination_i)
     t_sim = x_opt_poly_i.get_segment_times()[t_opt_break]
     # print('SIM t_sim',t_sim)
     state_sim_i = simulateUntil(t_sim, state_init_i, u_opt_poly_i, x_opt_poly_i, K_poly_i)
@@ -449,7 +478,6 @@ for i in range(len(t_impacts)):
     else:
         if i == len(t_impacts)-1:
             t_opt_break = T_i
-
         u_slice = u_opt_poly_i.slice(0,t_opt_break)
         x_slice = x_opt_poly_i.slice(0,t_opt_break)
         K_slice = K_poly_i.slice(0,t_opt_break)
@@ -465,6 +493,8 @@ for i in range(len(t_impacts)):
         u_opt_remaining = u_opt_poly_i.slice(t_opt_break, u_opt_poly_i.get_number_of_segments() - t_opt_break)
         x_opt_remaining = x_opt_poly_i.slice(t_opt_break, x_opt_poly_i.get_number_of_segments() - t_opt_break)
         h_opt_remaining = np.array(h_opt[t_opt_break:])
+
+    i += i_increment
 
 ##################################################################################
 # Setup diagram for simulation
