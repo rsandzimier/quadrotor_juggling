@@ -170,7 +170,6 @@ def makeDiagram(n_quadrotors, n_balls, use_visualizer=False,trajectory_u=None, t
     return diagram
 
 def solveOptimization(state_init, t_impact, impact_combination, T, u_guess = None, x_guess = None, h_guess = None):
-
     prog = MathematicalProgram()
     h = prog.NewContinuousVariables(T, name='h')
     u = prog.NewContinuousVariables(rows=T+1, cols = 2*n_quadrotors, name = 'u')
@@ -282,7 +281,7 @@ def solveOptimization(state_init, t_impact, impact_combination, T, u_guess = Non
     initial_guess = np.empty(prog.num_vars())
 
     # # initial guess for the time step
-    prog.SetDecisionVariableValueInVector(h, h_guess * T, initial_guess)
+    prog.SetDecisionVariableValueInVector(h, h_guess, initial_guess)
     x_init[0,:] = state_init
     prog.SetDecisionVariableValueInVector(x, x_guess, initial_guess)
     prog.SetDecisionVariableValueInVector(u, u_guess, initial_guess)
@@ -357,9 +356,9 @@ diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=False)
 ###
 
 context = diagram.CreateDefaultContext()
-T_total = 300 #Number of breakpoints
-t_impacts = np.array([100,200])
-impact_combination = np.array([[0,0],[1,0]]) #[quad,ball]
+T_total = 500 #Number of breakpoints
+t_impacts = np.array([100,200, 300, 400])
+impact_combination = np.array([[0,0],[1,0],[0,0],[1,0]]) #[quad,ball]
 
 h_min = 0.005/2
 h_max = 0.02/2
@@ -390,7 +389,7 @@ for i in range(len(t_impacts)):
 
         x_init = collatePosAndVel(q_init, qd_init)
         x_init[0,:] = state_init_i
-        h_init = [h_init * T_i]
+        h_init = [h_init]*T_i
 
     else:
         t_init = (t_impacts_i[0] + t_impacts_i[1])//2
@@ -404,19 +403,25 @@ for i in range(len(t_impacts)):
         T_i = T_i - t_init
 
         # Set up initial guesses based on ?
-        h_init = h_max
-        pos_indices = getPosIndices()
-        q_init_poly = PiecewisePolynomial.FirstOrderHold([0, T_i * h_init], np.column_stack((state_init[pos_indices], state_final[pos_indices])))
-        qd_init_poly = q_init_poly.derivative()
-        u_init_poly = PiecewisePolynomial.ZeroOrderHold([0, T_i * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
-        u_init = np.hstack([u_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
+        # h_init = h_max
+        # pos_indices = getPosIndices()
+        # q_init_poly = PiecewisePolynomial.FirstOrderHold([0, T_i * h_init], np.column_stack((state_init[pos_indices], state_final[pos_indices])))
+        # qd_init_poly = q_init_poly.derivative()
+        # u_init_poly = PiecewisePolynomial.ZeroOrderHold([0, T_i * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
+        # u_init = np.hstack([u_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
 
-        q_init = np.hstack([q_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
-        qd_init = np.hstack([qd_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
+        # q_init = np.hstack([q_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
+        # qd_init = np.hstack([qd_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
 
-        x_init = collatePosAndVel(q_init, qd_init)
+        # x_init = collatePosAndVel(q_init, qd_init)
+        # x_init[0,:] = state_init_i
+        # h_init = [h_init] * T_i
+
+        h_init = h_opt_remaining
+        t_offset = u_opt_remaining.start_time()
+        u_init = np.hstack([u_opt_remaining.value(t_offset + np.sum(h_init[0:t])) for t in range(T_i + 1)]).T
+        x_init = np.hstack([x_opt_remaining.value(t_offset + np.sum(h_init[0:t])) for t in range(T_i + 1)]).T
         x_init[0,:] = state_init_i
-        h_init = [h_init * T_i]
 
     # print('OPT state init',state_init_i)
     # print('OPT t_impacts',t_impacts_i[:-1])
@@ -455,8 +460,11 @@ for i in range(len(t_impacts)):
         u_opt_poly_all.ConcatenateInTime(u_slice)
         x_opt_poly_all.ConcatenateInTime(x_slice)
         K_poly_all.ConcatenateInTime(K_slice)
-    
-    # print(x_opt_poly_all.get_number_of_segments())
+
+    if t_opt_break < u_opt_poly_i.get_number_of_segments():
+        u_opt_remaining = u_opt_poly_i.slice(t_opt_break, u_opt_poly_i.get_number_of_segments() - t_opt_break)
+        x_opt_remaining = x_opt_poly_i.slice(t_opt_break, x_opt_poly_i.get_number_of_segments() - t_opt_break)
+        h_opt_remaining = np.array(h_opt[t_opt_break:])
 
 ##################################################################################
 # Setup diagram for simulation
