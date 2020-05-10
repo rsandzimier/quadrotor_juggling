@@ -15,7 +15,8 @@ from quadrotor2d import Quadrotor2D
 from ball2d import Ball2D
 from visualization import Visualizer
 from ltv_controller import LTVController
-from collisions import CalcClosestDistanceQuadBall, CalcPostCollisionStateQuadBall, CalcPostCollisionStateBallQuad, CalcPostCollisionStateQuadBallResidual, CalcPostCollisionStateBallQuadResidual
+from collisions import (CalcClosestDistanceQuadBall, CalcPostCollisionStateQuadBall, CalcPostCollisionStateBallQuad, CalcPostCollisionStateQuadBallResidual, CalcPostCollisionStateBallQuadResidual,
+                        CalcClosestDistanceBallBall)
 
 import matplotlib.animation as animation
 
@@ -215,20 +216,26 @@ def solveOptimization(state_init, t_impact, impact_combination, T, u_guess = Non
             else:
                 AddDirectCollocationConstraint(dir_coll_constr, np.array([[h[t]]]), x[t,ind_x:ind_x+4].reshape(-1,1), x[t+1,ind_x:ind_x+4].reshape(-1,1), u[t,0:0].reshape(-1,1), u[t+1,0:0].reshape(-1,1), prog)
 
+
     # Initial conditions
     prog.AddLinearConstraint(eq(x[0,:], state_init))
 
-    # Final conditions
-    prog.AddLinearConstraint(eq(x[T,0:14], state_final[0:14]))
+    # Add cost
+    # Q_cost = np.eye(6*n_quadrotors+4*n_balls)
+    # prog.AddQuadraticErrorCost(Q_cost, state_final, x[T,:])
+    # Q_cost = np.eye(2*n_quadrotors)
+    # for t in range(T):
+    #     prog.AddQuadraticCost(Q_cost, np.array([0,0,0,0]), u[t,:])
+
     # Quadrotor final conditions (full state)
     for i in range(n_quadrotors):
         ind = 6*i
         prog.AddLinearConstraint(eq(x[T,ind:ind+6], state_final[ind:ind+6]))
 
-    # Ball final conditions (position only)
+    # Ball final conditions (full state)
     for i in range(n_balls):
         ind = 6*n_quadrotors + 4*i
-        prog.AddLinearConstraint(eq(x[T,ind:ind+2], state_final[ind:ind+2]))
+        prog.AddLinearConstraint(eq(x[T,ind:ind+4], state_final[ind:ind+4]))
 
     # Input constraints
     for i in range(n_quadrotors):
@@ -274,7 +281,10 @@ def solveOptimization(state_init, t_impact, impact_combination, T, u_guess = Non
                         continue
                 # Everywhere else, witness function must be > 0
                 prog.AddConstraint(lambda a: np.array([CalcClosestDistanceQuadBall(a[ind_q:ind_q+3], a[ind_b:ind_b+2])]).reshape(1,1), lb=np.zeros((1,1)), ub=np.inf*np.ones((1,1)), vars=x[t,:].reshape(-1,1))
-
+    for j in range(n_balls-1):
+        ind_b = 6*n_quadrotors + 4*j
+        for t in range(T):
+            prog.AddConstraint(lambda a: np.array([CalcClosestDistanceBallBall(q_ball1 = a[ind_b:ind_b+2], q_ball2 = a[ind_b+4:ind_b+6])]).reshape(1,1), lb=np.zeros((1,1)), ub=np.inf*np.ones((1,1)), vars=x[t,:].reshape(-1,1))
     # Don't allow quadrotor collisions
     # for t in range(T):
     #     for i in range(n_quadrotors):
@@ -385,15 +395,16 @@ diagram = makeDiagram(n_quadrotors, n_balls, use_visualizer=False)
 ###
 
 context = diagram.CreateDefaultContext()
-T_total = 500 #Number of breakpoints
-t_impacts = np.array([100, 105, 200, 205, 300, 305, 400, 405])
-impact_combination = np.array([[0,0],[1,1],[0,1],[1,0],[0,0],[1,1],[0,1],[1,0]]) #[quad,ball]
+T_total = 550 #Number of breakpoints
+t_impacts = np.array([100, 110, 200, 210, 300, 310, 400, 410])
+impact_combination = np.array([[0,0],[1,1],[0,1],[1,0],[0,0],[1,1],[0,0],[1,1]]) #[quad,ball]
 
 h_min = 0.005/2
 h_max = 0.02/2
 
-state_init  = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  1.5, 1.0, 0.0, 0.0,   -1.5, 1.0, 0.0, 0.0])
-state_final = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  -1.5, 1.0, 0.0, 0.0,   1.5, 1.0, 0.0, 0.0])
+state_init  = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  1.5, 1.5, 0.0, 0.0,   -1.5, 1.5, 0.0, 0.0])
+#state_final = np.array([1.5, -1.5, 0.0, 0.0, 0.0, 0.0,     -1.5, -1.5, 0.0, 0.0, 0.0, 0.0,  -1.5, 1.0, 0.0, 0.0,   1.5, 1.5, 0.0, 0.0])
+state_final = state_init
 
 i = 0
 while i < len(t_impacts):
@@ -423,30 +434,13 @@ while i < len(t_impacts):
 
     else:
         t_init = t_opt_break
-        # Set up initial guesses based on previous solution
-        # h_init = h_opt[t_init:]
-        # x_init = np.hstack([x_opt_poly_i.value(t*h_opt[t-1]) for t in range(t_init, T_i+1)]).T
-        # u_init = np.hstack([u_opt_poly_i.value(t*h_opt[t-1]) for t in range(t_init, T_i+1)]).T
+        
         state_init_i = copy.copy(state_sim_i)
         t_impacts_i = t_impacts_i[i_increment:] - t_init
         impact_combination_i =  impact_combination_i[i_increment:,:] 
         T_i = T_i - t_init
 
-        # Set up initial guesses based on ?
-        # h_init = h_max
-        # pos_indices = getPosIndices()
-        # q_init_poly = PiecewisePolynomial.FirstOrderHold([0, T_i * h_init], np.column_stack((state_init[pos_indices], state_final[pos_indices])))
-        # qd_init_poly = q_init_poly.derivative()
-        # u_init_poly = PiecewisePolynomial.ZeroOrderHold([0, T_i * h_init], 0.5*quad_plant.mass*quad_plant.gravity*np.ones((2*n_quadrotors,2)))
-        # u_init = np.hstack([u_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
-
-        # q_init = np.hstack([q_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
-        # qd_init = np.hstack([qd_init_poly.value(t * h_init) for t in range(T_i + 1)]).T
-
-        # x_init = collatePosAndVel(q_init, qd_init)
-        # x_init[0,:] = state_init_i
-        # h_init = [h_init] * T_i
-
+        # Set up initial guesses based on previous solution
         h_init = h_opt_remaining
         t_offset = u_opt_remaining.start_time()
         u_init = np.hstack([u_opt_remaining.value(t_offset + np.sum(h_init[0:t])) for t in range(T_i + 1)]).T
