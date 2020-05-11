@@ -86,7 +86,7 @@ def CalcPostCollisionStateQuadBallAux(x_quad, x_ball, return_quad_state):
                         (m_quad*m_ball*(m_quad + m_ball)*I_quad + \
                         m_quad**2*m_ball**2*(moment_arm_quad - moment_arm_ball)**2)
 
-    w_quad_new = w_quad + (m_quad*moment_arm_quad*v_quad_par_new + m_ball*moment_arm_ball*v_ball_par_new)/I_quad
+    w_quad_new = w_quad + (m_quad*moment_arm_quad*(v_quad_par-v_quad_par_new) + m_ball*moment_arm_ball*(v_ball_par-v_ball_par_new))/I_quad
 
     if return_quad_state:
         x_quad[0:2] = x_quad[0:2] + dist*q_par_unit # Right now, only x,y position of quad update. In future, could look into updating theta too
