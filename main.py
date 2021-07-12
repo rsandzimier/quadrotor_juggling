@@ -424,9 +424,6 @@ while i < len(t_impacts):
     else:
         t_init = t_opt_break
         # Set up initial guesses based on previous solution
-        # h_init = h_opt[t_init:]
-        # x_init = np.hstack([x_opt_poly_i.value(t*h_opt[t-1]) for t in range(t_init, T_i+1)]).T
-        # u_init = np.hstack([u_opt_poly_i.value(t*h_opt[t-1]) for t in range(t_init, T_i+1)]).T
         state_init_i = copy.copy(state_sim_i)
         t_impacts_i = t_impacts_i[i_increment:] - t_init
         impact_combination_i =  impact_combination_i[i_increment:,:] 
@@ -453,10 +450,6 @@ while i < len(t_impacts):
         x_init = np.hstack([x_opt_remaining.value(t_offset + np.sum(h_init[0:t])) for t in range(T_i + 1)]).T
         x_init[0,:] = state_init_i
 
-    # print('OPT state init',state_init_i)
-    # print('OPT t_impacts',t_impacts_i[:-1])
-    # print('OPT impact_combination',impact_combination_i)
-    # print('OPT T',T_i)
     u_opt_poly_i, x_opt_poly_i, K_poly_i, h_opt = solveOptimization(state_init = state_init_i,
                                                              t_impact = t_impacts_i[:-1],
                                                              impact_combination = impact_combination_i,
@@ -543,6 +536,7 @@ Writer = animation.writers['ffmpeg']
 writer = Writer(fps=15, metadata=dict(artist='Me'), bitrate=1800)
 ani.save('animation.mp4', writer=writer)
 
+#plotting
 for i in range(n_quadrotors):
     ind_i = 6*i
     ind_f = ind_i + 3
